@@ -14,7 +14,6 @@ from datetime import datetime
 import json
 
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 
 from archive_handler import ArchiveOrgHandler
@@ -32,11 +31,11 @@ API_ID = int(os.environ.get('TELEGRAM_API_ID', '0'))
 API_HASH = os.environ.get('TELEGRAM_API_HASH', '')
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '')
-SESSION_NAME = os.environ.get('SESSION_NAME', 'archive_bot')
 
 class ArchiveTelegramBot:
     def __init__(self):
-        self.client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+        # No SESSION_NAME anymore
+        self.client = TelegramClient("bot", API_ID, API_HASH)
         self.archive_handler = ArchiveOrgHandler()
         self.channel_handler = TelegramChannelHandler(self.client, CHANNEL_ID)
         self.user_sessions: Dict[int, Dict[str, Any]] = {}
@@ -199,7 +198,6 @@ Choose a format to download and upload to the channel:
                     file_name = file_info['name']
                     await event.edit(f"📥 Processing {file_name} ({i+1}/{len(files)})...")
                     
-                    # Download file directly to Telegram
                     success = await self.download_and_upload_file(
                         file_info, session['metadata'], format_name
                     )
@@ -234,14 +232,10 @@ Choose a format to download and upload to the channel:
             # Get item metadata for caption
             item_metadata = metadata.get('metadata', {})
             title = item_metadata.get('title', 'Unknown Title')
-            creator = item_metadata.get('creator', 'Unknown Creator')
-            date = item_metadata.get('date', 'Unknown Date')
             
-            # Create caption
+            # Create caption (no uploader info)
             caption = f"""
 📁 **{title}**
-👤 {creator}
-📅 {date}
 💾 {format_name} format
 📊 {self.format_file_size(file_size)}
             """.strip()
