@@ -2,7 +2,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.1
+Version: 1.0.3
 Python 3.9+ compatible
 """
 
@@ -28,12 +28,13 @@ logger = logging.getLogger(__name__)
 API_ID = int(os.environ.get('TELEGRAM_API_ID', '0'))
 API_HASH = os.environ.get('TELEGRAM_API_HASH', '')
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '')
+
+# Channel ID must be integer, not string
+CHANNEL_ID = int(os.environ.get('TELEGRAM_CHANNEL_ID', '0'))
 
 
 class ArchiveTelegramBot:
     def __init__(self):
-        # session name not required
         self.client = TelegramClient("bot", API_ID, API_HASH)
         self.archive_handler = ArchiveOrgHandler()
         self.channel_handler = TelegramChannelHandler(self.client, CHANNEL_ID)
@@ -216,27 +217,31 @@ Choose a format to download and upload to the channel:
 
                 if cover_file:
                     await self.client.send_file(self.channel_handler.channel_id, cover_file, caption=album_info)
-                    cover_file.close()
                 else:
                     await self.channel_handler.send_message(album_info)
 
-                # Now upload tracks one by one (filename must be kept)
+                # Now upload tracks one by one
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
-                    await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {file_name}")
+                    track_title = file_info.get("title") or file_name
+
+                    await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {track_title}")
 
                     file_stream = await self.archive_handler.download_file_stream(file_info)
                     if not file_stream:
-                        await event.edit(f"❌ Failed to download: {file_name}")
+                        await event.edit(f"❌ Failed to download: {track_title}")
                         continue
 
                     success = await self.channel_handler.upload_file(
-                        file_stream, file_name, caption=None   # no caption, show filename only
+                        file_stream,
+                        file_name,
+                        caption=track_title,
+                        thumb=cover_file if cover_file else None
                     )
                     file_stream.close()
 
                     if not success:
-                        await event.edit(f"❌ Failed to upload: {file_name}")
+                        await event.edit(f"❌ Failed to upload: {track_title}")
 
                 # Clean up session
                 del self.user_sessions[user_id]
