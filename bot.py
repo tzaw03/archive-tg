@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Archive.org to Telegram Channel Bot
-Version: 2.0.0 (Myanmar Version)
-Author: Archive Bot Team
+Author: Your Name
+Version: 1.0.0
 Python 3.9+ compatible
 """
 
@@ -20,7 +20,7 @@ from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 from archive_handler import ArchiveOrgHandler
 from telegram_handler import TelegramChannelHandler
 
-# Logging setup
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -40,316 +40,204 @@ class ArchiveTelegramBot:
         self.archive_handler = ArchiveOrgHandler()
         self.channel_handler = TelegramChannelHandler(self.client, CHANNEL_ID)
         self.user_sessions: Dict[int, Dict[str, Any]] = {}
-        self.session_timeout = 3600  # 60 မိနစ်
         
     async def start(self):
-        """Bot ကိုစတင်ပါ"""
+        """Start the bot"""
         await self.client.start(bot_token=BOT_TOKEN)
-        logger.info("Bot စတင်ပြီးပါပြီ")
+        logger.info("Bot started successfully")
         
-        # Event handlers တွေထည့်ပါ
-        self.client.add_event_handler(self.handle_start, events.NewMessage(pattern='/start'))
-        self.client.add_event_handler(self.handle_help, events.NewMessage(pattern='/help'))
-        self.client.add_event_handler(self.handle_formats, events.NewMessage(pattern='/formats'))
-        self.client.add_event_handler(self.handle_cancel, events.NewMessage(pattern='/cancel'))
+        # Set up event handlers
         self.client.add_event_handler(self.handle_download_command, events.NewMessage(pattern='/download'))
         self.client.add_event_handler(self.handle_callback, events.CallbackQuery)
+        self.client.add_event_handler(self.handle_start, events.NewMessage(pattern='/start'))
+        self.client.add_event_handler(self.handle_help, events.NewMessage(pattern='/help'))
         
-        # Bot ကိုအလုပ်လုပ်အောင်စောင့်ပါ
+        # Run the bot
         await self.client.run_until_disconnected()
     
     async def handle_start(self, event):
-        """/start command ကိုဖြေကြားပါ"""
+        """Handle /start command"""
         welcome_text = """
-🤖 **Archive.org Music Downloader Bot**
+🤖 **Archive.org to Telegram Bot**
         
-🎵 **archive.org ကနေ သီချင်းတွေကို download လုပ်ပြီး channel ထဲကို upload ပေးနိုင်ပါတယ်**
+I can download content from archive.org and upload it directly to your Telegram channel!
 
-**📝 အသုံးပြုနည်းများ:**
-• `/download [archive.org URL]` - သီချင်းတွေ download လုပ်မယ်
-• `/formats` - ထောက်ပံ့ပေးတဲ့ format တွေကြည့်မယ်  
-• `/help` - အသေးစိတ်အကူအညီ
-• `/cancel` - လုပ်ဆောင်ချက်ရပ်မယ်
+**Commands:**
+• `/download [archive.org URL]` - Download and upload content
+• `/help` - Show this help message
 
-**🎯 အလွယ်ကူဆုံး:**
-`/download https://archive.org/details/your-album`
-
-**⏰ Session Timeout:** 30 မိနစ်
+**Example:**
+`/download https://archive.org/details/your-item`
         """
         await event.respond(welcome_text, parse_mode='markdown')
     
     async def handle_help(self, event):
-        """/help command ကိုဖြေကြားပါ"""
+        """Handle /help command"""
         help_text = """
-📋 **အကူအညီလိုအပ်ပါသလား**
+📋 **Help Guide**
 
-**🎵 ထောက်ပံ့ပေးတဲ့ Audio Format တွေ:**
-• FLAC (အရည်အသွေးအကောင်းဆုံး)
-• WAV ( uncompressed )
-• MP3 (compressed)
-• OGG (open format)
+**How to use:**
+1. Send me an archive.org URL with /download command
+2. I'll show you available formats (FLAC, MP3, WAV, etc.)
+3. Choose your preferred format
+4. I'll download and upload to the channel automatically
 
-**📁 အခြား File တွေ:**
-• Album Art (JPG/PNG)
-• Torrent files
-• PDF booklets
+**Supported formats:**
+• Audio: FLAC, MP3, WAV, OGG
+• Video: MP4, MKV, AVI
+• Images: JPG, PNG, GIF
+• Documents: PDF, EPUB, TXT
 
-**🚀 အသုံးပြုနည်း:**
-
-၁။ **archive.org မှာ သီချင်းရှာပါ**
-၂။ **URL ကို copy လုပ်ပါ** (ဥပမာ: https://archive.org/details/gratefuldead)
-၃။ **Command ပို့ပါ:** `/download [URL]`
-၄။ **Format ရွေးပါ** button တွေကနေ
-၅။ **Upload ပြီးတော့စောင့်ပါ**
-
-**⚡ အကြံပြုချက်များ:**
-• FLAC ကိုအရည်အသွအကောင်းဆုံးအတွက်သုံးပါ
-• MP3 ကို file size သေးချင်တဲ့အခါသုံးပါ
-• JPG ကို album cover အတွက်သုံးပါ
-
-**❓ အကူအညီလိုပါသလား?**
-Contact: @rgraves
+**Features:**
+• Direct streaming upload (no local storage)
+• Progress tracking
+• Automatic cleanup
+• Support for large files (up to 2GB)
         """
         await event.respond(help_text, parse_mode='markdown')
-
-    async def handle_formats(self, event):
-        """/formats command ကိုဖြေကြားပါ"""
-        formats_text = """
-🎵 **ထောက်ပံ့ပေးတဲ့ Format တွေ:**
-
-**🔊 Lossless (အရည်အသွေးအကောင်းဆုံး):**
-• FLAC - Free Lossless Audio Codec
-• WAV - Uncompressed Wave
-
-**🎧 Compressed (အရည်အသွကောင်းသည်):**
-• MP3 - MPEG Audio Layer 3
-• OGG - Ogg Vorbis
-
-**📷 အခြား File တွေ:**
-• JPG/PNG - Album artwork
-• PDF - Digital booklets
-• TORRENT - Torrent files
-
-**💡 အရည်အသွေးမှတ်ချက်:**
-• FLAC = CD quality (file ကြီးသည်)
-• MP3 320kbps = High quality
-• OGG = Open source alternative
-
-**📊 File Size:**
-• FLAC: 30-50MB တစ်ပုဒ်စီ
-• MP3: 3-10MB တစ်ပုဒ်စီ
-• WAV: 50-80MB တစ်ပုဒ်စီ
-        """
-        await event.respond(formats_text, parse_mode='markdown')
-
-    async def handle_cancel(self, event):
-        """/cancel command ကိုဖြေကြားပါ"""
-        user_id = event.sender_id
-        
-        if user_id in self.user_sessions:
-            del self.user_sessions[user_id]
-            await event.respond("✅ **လုပ်ဆောင်ချက်ကို ရပ်ဆိုင်းလိုက်ပါပြီ**\n\n`/download` နဲ့ download အသစ်စတင်နိုင်ပါသည်။", parse_mode='markdown')
-        else:
-            await event.respond("ℹ️ **ရပ်ဆိုင်းစရာ လုပ်ဆောင်ချက်မရှိပါ**\n\n`/download` နဲ့ download စတင်နိုင်ပါသည်။", parse_mode='markdown')
-
+    
     async def handle_download_command(self, event):
-        """/download command ကိုဖြေကြားပါ"""
+        """Handle /download command"""
         user_id = event.sender_id
-        
-        # Session ရှိမရှိစစ်ပါ
-        if user_id in self.user_sessions:
-            await event.respond("⚠️ သင့်မှာ active download session ရှိပါသည်။ `/cancel` နဲ့ စ重新开始 လုပ်နိုင်ပါသည်။")
-            return
-        
         message_text = event.message.text
         
-        # URL ကို extract လုပ်ပါ
+        # Extract URL from message
         try:
             url = message_text.split(' ', 1)[1].strip()
         except IndexError:
-            await event.respond("❌ **archive.org URL ကို ထည့်ပေးပါ**\n\n**ဥပမာ:**\n`/download https://archive.org/details/gratefuldead-sbd`", parse_mode='markdown')
+            await event.respond("❌ Please provide an archive.org URL\nExample: `/download https://archive.org/details/item-name`", parse_mode='markdown')
             return
         
-        # URL ကို validate လုပ်ပါ
-        if not url.startswith(('http://archive.org', 'https://archive.org')):
-            await event.respond("❌ **URL မမှန်ပါ**\narchive.org URL ဖြစ်ရမည်")
-            return
-        
-        # Processing message ကိုပြပါ
-        processing_msg = await event.respond("🔍 **archive.org metadata ကို ရယူနေပါသည်...**\n⏱️ အချိန်အနည်းငယ်စောင့်ပါ...")
+        # Show processing message
+        processing_msg = await event.respond("🔍 Fetching archive.org metadata...")
         
         try:
-            # archive.org ကနေ metadata ရယူပါ
+            # Get metadata from archive.org
             metadata = await self.archive_handler.get_metadata(url)
             
             if not metadata:
-                await processing_msg.edit("❌ **Metadata ရယူနိုင်မည်မဟုတ်ပါ**\nURL ကိုစစ်ပြီးပြန်ကြိုးစားပါ။")
+                await processing_msg.edit("❌ Unable to fetch metadata. Please check the URL.")
                 return
             
-            # Session data သိမ်းပါ
+            # Store session data
             self.user_sessions[user_id] = {
                 'url': url,
                 'metadata': metadata,
-                'message_id': processing_msg.id,
-                'timestamp': datetime.now()
+                'message_id': processing_msg.id
             }
             
-            # Available formats ရယူပါ
+            # Get available formats
             formats = self.archive_handler.get_available_formats(metadata)
             
             if not formats:
-                await processing_msg.edit("❌ **Download လုပ်နိုင်သော format မရှိပါ**\nဒီ item မှာ audio files မရှိနိုင်ပါ။")
+                await processing_msg.edit("❌ No downloadable formats found.")
                 return
             
-            # Format selection message ဖန်တီးပါ
-            item_title = metadata.get('metadata', {}).get('title', 'Unknown Item')
-            item_creator = metadata.get('metadata', {}).get('creator', 'Unknown Artist')
-            
-            response_text = f"""
-🎵 **{item_title}**
-👤 **{item_creator}**
-
-📊 **ရရှိနိုင်သော Format တွေ:**
-            """
-            
-            # Inline keyboard ဖန်တီးပါ
+            # Create inline keyboard
             buttons = []
             for format_name, files in formats.items():
-                if files:
-                    file_count = len(files)
-                    total_size = sum(int(f.get('size', 0)) for f in files)
-                    size_str = self.format_file_size(total_size)
-                    buttons.append([Button.inline(f"🎵 {format_name} ({file_count} files, {size_str})", f"format_{format_name}")])
+                if files:  # Only show formats with files
+                    count = len(files)
+                    buttons.append([Button.inline(f"{format_name} ({count} files)", f"format_{format_name}")])
             
             if not buttons:
-                await processing_msg.edit("❌ **Download လုပ်နိုင်သော format မရှိပါ**")
+                await processing_msg.edit("❌ No downloadable formats available.")
                 return
             
-            # Utility buttons ထည့်ပါ
-            buttons.append([
-                Button.inline("🔄 Refresh", "refresh"),
-                Button.inline("❌ Cancel", "cancel")
-            ])
+            # Add cancel button
+            buttons.append([Button.inline("❌ Cancel", "cancel")])
             
-            # Message ကို update လုပ်ပါ
+            # Update message with format selection
+            item_title = metadata.get('metadata', {}).get('title', 'Unknown Item')
+            response_text = f"""
+📁 **{item_title}**
+
+Available formats:
+Choose a format to download and upload to the channel:
+            """
+            
             await processing_msg.edit(response_text, buttons=buttons, parse_mode='markdown')
             
         except Exception as e:
-            logger.error(f"Download command error: {e}")
-            await processing_msg.edit(f"❌ **Error:** {str(e)}\nကြိုးစားပြီးမရရင် support ကိုဆက်သွယ်ပါ။")
-            
-            # Error တက်ရင် session သန့်ရှင်းပါ
-            if user_id in self.user_sessions:
-                del self.user_sessions[user_id]
-
+            logger.error(f"Error processing download command: {e}")
+            await processing_msg.edit(f"❌ Error: {str(e)}")
+    
     async def handle_callback(self, event):
-        """Callback queries ကိုဖြေကြားပါ"""
+        """Handle inline keyboard callbacks"""
         user_id = event.sender_id
         data = event.data.decode('utf-8')
         
-        # Session ရှိမရှိစစ်ပါ
+        # Check if user has an active session
         if user_id not in self.user_sessions:
-            await event.answer("❌ Session ပျက်သွားပါပြီ။ `/download` နဲ့ စ重新开始 လုပ်ပါ။", alert=True)
+            await event.answer("❌ Session expired. Please start over.", alert=True)
             return
         
-        # Session timeout စစ်ပါ
         session = self.user_sessions[user_id]
-        if (datetime.now() - session.get('timestamp', datetime.now())).seconds > self.session_timeout:
-            del self.user_sessions[user_id]
-            await event.answer("⏰ Session time out ဖြစ်သွားပါပြီ။ `/download` နဲ့ စ重新开始 လုပ်ပါ။", alert=True)
-            return
         
         if data == 'cancel':
             del self.user_sessions[user_id]
-            await event.edit("❌ **Download ရပ်ဆိုင်းလိုက်ပါပြီ**\n\n`/download` နဲ့ download အသစ်စတင်နိုင်ပါသည်။", parse_mode='markdown')
-            return
-        
-        if data == 'refresh':
-            await event.answer("🔄 Refreshing...", alert=False)
-            # Metadata ပြန်ရယူပါ
-            try:
-                metadata = await self.archive_handler.get_metadata(session['url'])
-                if metadata:
-                    session['metadata'] = metadata
-                    await event.answer("✅ Successfully refreshed!", alert=False)
-                else:
-                    await event.answer("❌ Failed to refresh", alert=True)
-            except:
-                await event.answer("❌ Refresh failed", alert=True)
+            await event.edit("❌ Operation cancelled.")
             return
         
         if data.startswith('format_'):
             format_name = data.replace('format_', '', 1)
             
             try:
-                # Selected format အတွက် files ရယူပါ
+                # Get files for selected format
                 formats = self.archive_handler.get_available_formats(session['metadata'])
                 files = formats.get(format_name, [])
                 
                 if not files:
-                    await event.answer("❤️ ဒီ format မှာ files မရှိပါ", alert=True)
+                    await event.answer("❌ No files available in this format.", alert=True)
                     return
                 
-                # Progress ပြပါ
-                await event.edit(f"📥 **{format_name} download ပြင်ဆင်နေပါသည်...**\n\n⏳ ကြီးမားသော files တွေအတွက် မိနစ်အနည်းငယ်စောင့်ပါ။")
+                # Update message to show progress
+                await event.edit(f"📥 Downloading {format_name} format... Please wait.")
                 
-                # Files တွေကို upload လုပ်ပါ
-                uploaded_count = 0
-                total_count = len(files)
-                
+                # Download and upload files
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
-                    file_size = int(file_info.get('size', 0))
+                    await event.edit(f"📥 Processing {file_name} ({i+1}/{len(files)})...")
                     
-                    # Progress update
-                    progress_text = f"📥 **{format_name} downloading**\n\n📄 File {i+1}/{total_count}\n📊 {file_name}\n💾 {self.format_file_size(file_size)}"
-                    await event.edit(progress_text)
-                    
-                    # Download and upload
+                    # Download file directly to Telegram
                     success = await self.download_and_upload_file(
                         file_info, session['metadata'], format_name
                     )
                     
                     if success:
-                        uploaded_count += 1
-                        await event.edit(f"✅ **Uploaded:** {file_name}\n\n📊 Progress: {uploaded_count}/{total_count}")
+                        await event.edit(f"✅ Uploaded: {file_name}")
                     else:
-                        await event.edit(f"❌ **Failed:** {file_name}\n\n📊 Progress: {uploaded_count}/{total_count}")
+                        await event.edit(f"❌ Failed to upload: {file_name}")
                 
-                # Final message
-                if uploaded_count == total_count:
-                    await event.edit(f"🎉 **{format_name} files အားလုံး upload ပြီးပါပြီ!**\n\n📊 Total: {uploaded_count} files\n\n💡 `/download` နဲ့ download အသစ်စတင်နိုင်ပါသည်။")
-                else:
-                    await event.edit(f"⚠️ **Partial upload ပြီးပါပြီ**\n\n✅ Success: {uploaded_count}/{total_count}\n\n💡 `/download` နဲ့ ပြန်ကြိုးစားနိုင်ပါသည်။")
-                
-                # Session သန့်ရှင်းပါ
+                # Clean up session
                 del self.user_sessions[user_id]
+                await event.edit("🎉 All files uploaded successfully!")
                 
             except Exception as e:
-                logger.error(f"Format selection error: {e}")
-                await event.edit(f"❌ **Upload failed:** {str(e)}\n\n💡 `/download` နဲ့ ပြန်ကြိုးစားပါ။")
+                logger.error(f"Error processing format selection: {e}")
+                await event.edit(f"❌ Error: {str(e)}")
                 del self.user_sessions[user_id]
-
+    
     async def download_and_upload_file(self, file_info: Dict[str, Any], metadata: Dict[str, Any], format_name: str) -> bool:
-        """archive.org ကနေ file download လုပ်ပြီး Telegram channel ထဲ upload လုပ်ပါ"""
+        """Download file from archive.org and upload to Telegram channel"""
         try:
-            # File stream download လုပ်ပါ
+            # Download file stream
             file_stream = await self.archive_handler.download_file_stream(file_info)
             
             if not file_stream:
                 return False
             
-            # File metadata ရယူပါ
+            # Get file metadata
             file_name = file_info['name']
             file_size = file_info.get('size', 0)
             
-            # Item metadata ရယူပါ
+            # Get item metadata for caption
             item_metadata = metadata.get('metadata', {})
             title = item_metadata.get('title', 'Unknown Title')
-            creator = item_metadata.get('creator', 'Unknown Artist')
+            creator = item_metadata.get('creator', 'Unknown Creator')
             date = item_metadata.get('date', 'Unknown Date')
             
-            # Caption ဖန်တီးပါ
+            # Create caption
             caption = f"""
 📁 **{title}**
 👤 {creator}
@@ -358,7 +246,7 @@ Contact: @rgraves
 📊 {self.format_file_size(file_size)}
             """.strip()
             
-            # Channel ထဲ upload လုပ်ပါ
+            # Upload to channel
             success = await self.channel_handler.upload_file(
                 file_stream, file_name, caption
             )
@@ -366,12 +254,12 @@ Contact: @rgraves
             return success
             
         except Exception as e:
-            logger.error(f"File download/upload error: {e}")
+            logger.error(f"Error downloading/uploading file: {e}")
             return False
     
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """File size """
+        """Format file size in human readable format"""
         if size_bytes == 0:
             return "0 B"
         
@@ -390,9 +278,9 @@ async def main():
     try:
         await bot.start()
     except KeyboardInterrupt:
-        logger.info("Bot ")
+        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Bot crash : {e}")
+        logger.error(f"Bot crashed: {e}")
 
 if __name__ == '__main__':
     asyncio.run(main())
