@@ -178,7 +178,7 @@ class ArchiveOrgHandler:
     
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """File size ကို လူနားလည်အောင်ပြောပါ"""
+        """File size """
         if size_bytes == 0:
             return "0 B"
         
