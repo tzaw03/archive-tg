@@ -2,7 +2,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.5
+Version: 1.0.6
 Python 3.9+ compatible
 """
 
@@ -10,6 +10,7 @@ import os
 import logging
 import asyncio
 from typing import Dict, Any
+import io
 
 from telethon import TelegramClient, events, Button
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError
@@ -166,7 +167,7 @@ Choose a format to download and upload to the channel:
 
     async def handle_callback(self, event):
         """Handle inline keyboard callbacks"""
-        import os  # added for os.path.splitext
+        import os
         user_id = event.sender_id
         data = event.data.decode('utf-8')
 
@@ -198,15 +199,12 @@ Choose a format to download and upload to the channel:
                 album_name = item_metadata.get('title', 'Unknown Album')
                 release_date = item_metadata.get('date', 'Unknown Date')
                 total_tracks = len(files)
-                provider = "Archive.org"
-                quality = format_name
 
                 album_info = f"""
 🎵 **Title:** {album_name}
 📅 **Release Date:** {release_date}
 🔢 **Total Tracks:** {total_tracks}
-💽 **Format:** {quality}
-🌐 **Provider:** {provider}
+💽 **Format:** {format_name}
                 """.strip()
 
                 # Try to get album cover (jpg/png)
@@ -232,9 +230,8 @@ Choose a format to download and upload to the channel:
                 # Now upload tracks one by one
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
-                    # Use file_info title, fallback to filename without extension
-                    track_title = file_info.get("title") or os.path.splitext(file_name)[0]
-                    track_caption = f"{i+1:02d}. {track_title}"
+                    track_title = os.path.splitext(file_name)[0]  # remove extension only
+                    track_caption = f"{track_title}"
 
                     await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {track_title}")
 
@@ -242,6 +239,9 @@ Choose a format to download and upload to the channel:
                     if not file_stream:
                         await event.edit(f"❌ Failed to download: {track_title}")
                         continue
+
+                    # Reset stream pointer before upload
+                    file_stream.seek(0)
 
                     success = await self.channel_handler.upload_file(
                         file_stream,
