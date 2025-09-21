@@ -27,6 +27,10 @@ class TelegramChannelHandler:
     async def upload_file(self, file_stream, file_name: str, caption: str = None, thumb=None):
         """Upload a file to the Telegram channel"""
         try:
+            # Reset stream pointer to start before upload
+            if hasattr(file_stream, "seek"):
+                file_stream.seek(0)
+
             await self.client.send_file(
                 self.channel_id,
                 file=file_stream,
