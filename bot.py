@@ -2,7 +2,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.4
+Version: 1.0.5
 Python 3.9+ compatible
 """
 
@@ -198,28 +198,34 @@ Choose a format to download and upload to the channel:
                 album_name = item_metadata.get('title', 'Unknown Album')
                 release_date = item_metadata.get('date', 'Unknown Date')
                 total_tracks = len(files)
+                provider = "Archive.org"
+                quality = format_name
 
                 album_info = f"""
-🎵 **{album_name}**
-📅 Release Date: {release_date}
-🔢 Total Tracks: {total_tracks}
-💾 Format: {format_name}
+🎵 **Title:** {album_name}
+📅 **Release Date:** {release_date}
+🔢 **Total Tracks:** {total_tracks}
+💽 **Format:** {quality}
+🌐 **Provider:** {provider}
                 """.strip()
 
                 # Try to get album cover (jpg/png)
                 cover_file = None
-                cover_name = None
                 for f in session['metadata'].get('files', []):
                     name = f.get("name", "").lower()
                     if name.endswith((".jpg", ".jpeg", ".png")):
-                        cover_name = f["name"]
                         cover_file = await self.archive_handler.download_file_stream(
                             {"identifier": self.archive_handler.current_identifier, "name": f["name"]}
                         )
                         break
 
+                # Send album cover with full metadata as caption
                 if cover_file:
-                    await self.client.send_file(self.channel_handler.channel_id, cover_file, caption=album_info)
+                    await self.client.send_file(
+                        self.channel_handler.channel_id,
+                        cover_file,
+                        caption=album_info
+                    )
                 else:
                     await self.channel_handler.send_message(album_info)
 
