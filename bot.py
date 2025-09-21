@@ -1,3 +1,4 @@
+# bot.py
 #!/usr/bin/env python3
 """
 Archive.org to Telegram Channel Bot
@@ -207,30 +208,46 @@ Choose a format to download and upload to the channel:
 💽 **Format:** {format_name}
                 """.strip()
 
-                # Try to get album cover (jpg/png)
-                cover_file = None
+                # Try to get album cover bytes (jpg/png)
+                cover_bytes = None
                 for f in session['metadata'].get('files', []):
                     name = f.get("name", "").lower()
                     if name.endswith((".jpg", ".jpeg", ".png")):
-                        cover_file = await self.archive_handler.download_file_stream(
+                        cover_stream = await self.archive_handler.download_file_stream(
                             {"identifier": self.archive_handler.current_identifier, "name": f["name"]}
                         )
+                        if cover_stream:
+                            try:
+                                cover_stream.seek(0)
+                                cover_bytes = cover_stream.read()
+                            except Exception:
+                                cover_bytes = None
+                            finally:
+                                try:
+                                    cover_stream.close()
+                                except Exception:
+                                    pass
                         break
 
-                # Send album cover with full metadata as caption
-                if cover_file:
-                    await self.client.send_file(
-                        self.channel_handler.channel_id,
-                        cover_file,
-                        caption=album_info
-                    )
+                # Send album cover with full metadata as caption (cover_bytes -> fresh BytesIO)
+                if cover_bytes:
+                    try:
+                        album_cover_stream = io.BytesIO(cover_bytes)
+                        album_cover_stream.seek(0)
+                        await self.client.send_file(self.channel_handler.channel_id, album_cover_stream, caption=album_info)
+                    finally:
+                        try:
+                            album_cover_stream.close()
+                        except Exception:
+                            pass
                 else:
                     await self.channel_handler.send_message(album_info)
 
                 # Now upload tracks one by one
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
-                    track_title = os.path.splitext(file_name)[0]  # remove extension only
+                    # use filename without extension as caption (no artist/provider)
+                    track_title = os.path.splitext(file_name)[0]
                     track_caption = f"{track_title}"
 
                     await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {track_title}")
@@ -240,16 +257,39 @@ Choose a format to download and upload to the channel:
                         await event.edit(f"❌ Failed to download: {track_title}")
                         continue
 
-                    # Reset stream pointer before upload
-                    file_stream.seek(0)
+                    # Ensure pointer at start for the file to upload
+                    try:
+                        file_stream.seek(0)
+                    except Exception:
+                        pass
 
+                    # Prepare a fresh thumb stream per upload (if we have cover bytes)
+                    thumb_stream = None
+                    if cover_bytes:
+                        thumb_stream = io.BytesIO(cover_bytes)
+                        try:
+                            thumb_stream.seek(0)
+                        except Exception:
+                            pass
+
+                    # Upload (telegram_handler.upload_file will also seek(0) defensively)
                     success = await self.channel_handler.upload_file(
                         file_stream,
                         file_name,
                         caption=track_caption,
-                        thumb=cover_file if cover_file else None
+                        thumb=thumb_stream
                     )
-                    file_stream.close()
+
+                    # Close streams after upload attempt
+                    try:
+                        file_stream.close()
+                    except Exception:
+                        pass
+                    if thumb_stream:
+                        try:
+                            thumb_stream.close()
+                        except Exception:
+                            pass
 
                     if not success:
                         await event.edit(f"❌ Failed to upload: {track_title}")
@@ -261,7 +301,8 @@ Choose a format to download and upload to the channel:
             except Exception as e:
                 logger.error(f"Error processing format selection: {e}")
                 await event.edit(f"❌ Error: {str(e)}")
-                del self.user_sessions[user_id]
+                if user_id in self.user_sessions:
+                    del self.user_sessions[user_id]
 
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
