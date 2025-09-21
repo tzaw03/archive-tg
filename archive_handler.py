@@ -1,3 +1,4 @@
+# archive_handler.py
 #!/usr/bin/env python3
 """
 Archive.org Handler Module
@@ -108,8 +109,12 @@ class ArchiveOrgHandler:
                 continue
             
             file_size = file_info.get('size', 0)
-            if int(file_size) < 1024:
-                continue
+            try:
+                if int(file_size) < 1024:
+                    continue
+            except Exception:
+                # if size not an int or missing, skip very small files
+                pass
             
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             
