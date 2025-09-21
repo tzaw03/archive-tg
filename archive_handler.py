@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Archive.org Handler Module
-archive.org API ကိုအသုံးပြုပြီး file တွေကို download လုပ်ပါ
+Handles all archive.org API interactions
 """
 
 import asyncio
@@ -29,13 +29,13 @@ class ArchiveOrgHandler:
             await self.session.close()
     
     async def get_session(self):
-        """aiohttp session ရယူပါ"""
+        """Get or create aiohttp session"""
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession()
         return self.session
     
     def extract_identifier(self, url: str) -> Optional[str]:
-        """archive.org URL ကနေ identifier ကို extract လုပ်ပါ"""
+        """Extract identifier from archive.org URL"""
         try:
             parsed = urlparse(url)
             path_parts = parsed.path.strip('/').split('/')
@@ -45,20 +45,20 @@ class ArchiveOrgHandler:
                 if idx + 1 < len(path_parts):
                     return path_parts[idx + 1]
             
-            # Direct identifier URLs
+            # Handle direct identifier URLs
             if len(path_parts) == 1 and path_parts[0]:
                 return path_parts[0]
                 
             return None
         except Exception as e:
-            logger.error(f"URL {url} ကနေ identifier extract မရပါ: {e}")
+            logger.error(f"Error extracting identifier from URL {url}: {e}")
             return None
     
     async def get_metadata(self, url: str) -> Optional[Dict[str, Any]]:
-        """archive.org item အတွက် metadata ရယူပါ"""
+        """Get metadata for archive.org item"""
         identifier = self.extract_identifier(url)
         if not identifier:
-            logger.error("URL ကနေ identifier မရနိုင်ပါ")
+            logger.error("Could not extract identifier from URL")
             return None
         
         try:
@@ -68,22 +68,22 @@ class ArchiveOrgHandler:
             async with session.get(metadata_url) as response:
                 if response.status == 200:
                     metadata = await response.json()
-                    logger.info(f"{identifier} အတွက် metadata ရယူပြီးပါပြီ")
+                    logger.info(f"Successfully fetched metadata for {identifier}")
                     return metadata
                 else:
-                    logger.error(f"Metadata မရနိုင်ပါ: {response.status}")
+                    logger.error(f"Failed to fetch metadata: {response.status}")
                     return None
                     
         except Exception as e:
-            logger.error(f"Metadata ရယူရာမှာ error: {e}")
+            logger.error(f"Error fetching metadata: {e}")
             return None
     
     def get_available_formats(self, metadata: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-        """Metadata ကနေ download လုပ်နိုင်သော format တွေကို ရယူပါ"""
+        """Get available download formats from metadata"""
         formats = {}
         files = metadata.get('files', [])
         
-        # Format categories
+        # Define format categories
         format_categories = {
             'FLAC': ['flac'],
             'MP3': ['mp3'],
@@ -107,18 +107,18 @@ class ArchiveOrgHandler:
             if not file_name:
                 continue
             
-            # Metadata files တွေကို skip လုပ်ပါ
+            # Skip metadata files
             if file_name.endswith(('_meta.xml', '_files.xml', '_chocr.html', '_djvu.txt')):
                 continue
             
-            # Small files တွေကို skip လုပ်ပါ
+            # Skip small files (likely thumbnails or metadata)
             file_size = file_info.get('size', 0)
-            if int(file_size) < 1024:  # 1KB ထက်သေးတဲ့ files
+            if int(file_size) < 1024:  # Less than 1KB
                 continue
             
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             
-            # Format category ရှာပါ
+            # Find matching format category
             for format_name, extensions in format_categories.items():
                 if file_ext in extensions:
                     if format_name not in formats:
@@ -126,32 +126,32 @@ class ArchiveOrgHandler:
                     formats[format_name].append(file_info)
                     break
         
-        # File count အရ sort လုပ်ပါ
+        # Sort formats by file count
         return dict(sorted(formats.items(), key=lambda x: len(x[1]), reverse=True))
     
     async def download_file_stream(self, file_info: Dict[str, Any]) -> Optional[io.BytesIO]:
-        """File ကို stream အနေနဲ့ download လုပ်ပါ"""
+        """Download file as stream"""
         try:
             session = await self.get_session()
             
-            # Download URL ဖန်တီးပါ
+            # Construct download URL
             identifier = file_info.get('identifier', '')
             file_name = file_info.get('name', '')
             
             if not identifier or not file_name:
-                logger.error("Identifier or filename မရှိပါ")
+                logger.error("Missing identifier or filename")
                 return None
             
             download_url = f"{self.base_url}{self.download_endpoint.format(identifier=identifier, filename=file_name)}"
             
             logger.info(f"Downloading: {file_name}")
             
-            # Stream download
+            # Download file in chunks
             file_stream = io.BytesIO()
             
             async with session.get(download_url) as response:
                 if response.status != 200:
-                    logger.error(f"File download မအောင်မြင်ပါ: {response.status}")
+                    logger.error(f"Failed to download file: {response.status}")
                     return None
                 
                 total_size = int(response.headers.get('content-length', 0))
@@ -162,23 +162,23 @@ class ArchiveOrgHandler:
                         file_stream.write(chunk)
                         downloaded += len(chunk)
                         
-                        # Large files အတွက် progress log
-                        if total_size > 10 * 1024 * 1024:  # 10MB ထက်ကြီး
+                        # Log progress for large files
+                        if total_size > 10 * 1024 * 1024:  # Files larger than 10MB
                             progress = (downloaded / total_size) * 100
-                            if int(progress) % 10 == 0:  # 10% တိုင်းမှာ log
+                            if int(progress) % 10 == 0:  # Log every 10%
                                 logger.info(f"Download progress: {progress:.1f}%")
                 
                 file_stream.seek(0)
-                logger.info(f"Download successful: {file_name} ({self.format_file_size(downloaded)})")
+                logger.info(f"Successfully downloaded: {file_name} ({self.format_file_size(downloaded)})")
                 return file_stream
                 
         except Exception as e:
-            logger.error(f"File download error: {e}")
+            logger.error(f"Error downloading file: {e}")
             return None
     
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """File size """
+        """Format file size in human readable format"""
         if size_bytes == 0:
             return "0 B"
         
