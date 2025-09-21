@@ -6,7 +6,7 @@ Handles all Telegram channel operations
 
 import asyncio
 import logging
-from typing import Optional, IO
+from typing import Optional
 from io import BytesIO
 
 from telethon import TelegramClient
@@ -18,36 +18,36 @@ logger = logging.getLogger(__name__)
 class TelegramChannelHandler:
     def __init__(self, client: TelegramClient, channel_id: str):
         self.client = client
-        self.channel_id = channel_id
+        # Ensure channel_id is int (Telethon requires numeric ID for bots)
+        try:
+            self.channel_id = int(channel_id)
+        except ValueError:
+            self.channel_id = channel_id
         
-    async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str) -> bool:
+    async def upload_file(self, file_stream: BytesIO, file_name: str, caption: Optional[str] = None) -> bool:
         """Upload file to Telegram channel"""
         try:
             # Determine file type and attributes
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
-            
-            # Set appropriate attributes based on file type
             attributes = []
             
             if file_ext in ['mp3', 'flac', 'wav', 'ogg']:
                 attributes.append(DocumentAttributeAudio(
-                    duration=0,  # Will be auto-detected
+                    duration=0,  # auto-detected
                     title=file_name,
-                    performer="Archive.org"
+                    performer=None
                 ))
             elif file_ext in ['mp4', 'mkv', 'avi']:
                 attributes.append(DocumentAttributeVideo(
-                    duration=0,  # Will be auto-detected
-                    w=0,  # Will be auto-detected
-                    h=0   # Will be auto-detected
+                    duration=0,  # auto-detected
+                    w=0,
+                    h=0
                 ))
             
             # Upload file
             logger.info(f"Uploading {file_name} to channel...")
-            
             file_stream.seek(0)  # Reset stream position
             
-            # Send file to channel
             await self.client.send_file(
                 self.channel_id,
                 file_stream,
@@ -55,7 +55,7 @@ class TelegramChannelHandler:
                 file_name=file_name,
                 attributes=attributes,
                 allow_cache=False,
-                force_document=False,  # Let Telegram decide how to send
+                force_document=False,
                 supports_streaming=True
             )
             
@@ -87,7 +87,6 @@ class TelegramChannelHandler:
     async def send_progress_update(self, message: str) -> bool:
         """Send progress update to channel"""
         try:
-            # Add timestamp to message
             timestamp = asyncio.get_event_loop().time()
             progress_message = f"⏰ {timestamp:.0f}: {message}"
             await self.send_message(progress_message)
