@@ -1,0 +1,8 @@
+[build]
+builder = "docker"
+
+[deploy]
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 3
+healthcheckPath = "/health"
+healthcheckTimeout = 300
