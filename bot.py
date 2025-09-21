@@ -2,7 +2,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.3
+Version: 1.0.4
 Python 3.9+ compatible
 """
 
@@ -166,6 +166,7 @@ Choose a format to download and upload to the channel:
 
     async def handle_callback(self, event):
         """Handle inline keyboard callbacks"""
+        import os  # added for os.path.splitext
         user_id = event.sender_id
         data = event.data.decode('utf-8')
 
@@ -207,9 +208,11 @@ Choose a format to download and upload to the channel:
 
                 # Try to get album cover (jpg/png)
                 cover_file = None
+                cover_name = None
                 for f in session['metadata'].get('files', []):
                     name = f.get("name", "").lower()
                     if name.endswith((".jpg", ".jpeg", ".png")):
+                        cover_name = f["name"]
                         cover_file = await self.archive_handler.download_file_stream(
                             {"identifier": self.archive_handler.current_identifier, "name": f["name"]}
                         )
@@ -223,7 +226,9 @@ Choose a format to download and upload to the channel:
                 # Now upload tracks one by one
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
-                    track_title = file_info.get("title") or file_name
+                    # Use file_info title, fallback to filename without extension
+                    track_title = file_info.get("title") or os.path.splitext(file_name)[0]
+                    track_caption = f"{i+1:02d}. {track_title}"
 
                     await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {track_title}")
 
@@ -235,7 +240,7 @@ Choose a format to download and upload to the channel:
                     success = await self.channel_handler.upload_file(
                         file_stream,
                         file_name,
-                        caption=track_title,
+                        caption=track_caption,
                         thumb=cover_file if cover_file else None
                     )
                     file_stream.close()
