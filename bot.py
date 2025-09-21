@@ -164,89 +164,88 @@ Choose a format to download and upload to the channel:
             await processing_msg.edit(f"❌ Error: {str(e)}")
 
     async def handle_callback(self, event):
-    """Handle inline keyboard callbacks"""
-    user_id = event.sender_id
-    data = event.data.decode('utf-8')
+        """Handle inline keyboard callbacks"""
+        user_id = event.sender_id
+        data = event.data.decode('utf-8')
 
-    if user_id not in self.user_sessions:
-        await event.answer("❌ Session expired. Please start over.", alert=True)
-        return
+        if user_id not in self.user_sessions:
+            await event.answer("❌ Session expired. Please start over.", alert=True)
+            return
 
-    session = self.user_sessions[user_id]
+        session = self.user_sessions[user_id]
 
-    if data == 'cancel':
-        del self.user_sessions[user_id]
-        await event.edit("❌ Operation cancelled.")
-        return
+        if data == 'cancel':
+            del self.user_sessions[user_id]
+            await event.edit("❌ Operation cancelled.")
+            return
 
-    if data.startswith('format_'):
-        format_name = data.replace('format_', '', 1)
+        if data.startswith('format_'):
+            format_name = data.replace('format_', '', 1)
 
-        try:
-            # Get files for selected format
-            formats = self.archive_handler.get_available_formats(session['metadata'])
-            files = formats.get(format_name, [])
+            try:
+                # Get files for selected format
+                formats = self.archive_handler.get_available_formats(session['metadata'])
+                files = formats.get(format_name, [])
 
-            if not files:
-                await event.answer("❌ No files available in this format.", alert=True)
-                return
+                if not files:
+                    await event.answer("❌ No files available in this format.", alert=True)
+                    return
 
-            # --- Album-level metadata message ---
-            item_metadata = session['metadata'].get('metadata', {})
-            album_name = item_metadata.get('title', 'Unknown Album')
-            release_date = item_metadata.get('date', 'Unknown Date')
-            total_tracks = len(files)
+                # --- Album-level metadata message ---
+                item_metadata = session['metadata'].get('metadata', {})
+                album_name = item_metadata.get('title', 'Unknown Album')
+                release_date = item_metadata.get('date', 'Unknown Date')
+                total_tracks = len(files)
 
-            album_info = f"""
+                album_info = f"""
 🎵 **{album_name}**
 📅 Release Date: {release_date}
 🔢 Total Tracks: {total_tracks}
 💾 Format: {format_name}
-            """.strip()
+                """.strip()
 
-            # Try to get album cover (jpg/png)
-            cover_file = None
-            for f in session['metadata'].get('files', []):
-                name = f.get("name", "").lower()
-                if name.endswith((".jpg", ".jpeg", ".png")):
-                    cover_file = await self.archive_handler.download_file_stream(
-                        {"identifier": self.archive_handler.current_identifier, "name": f["name"]}
+                # Try to get album cover (jpg/png)
+                cover_file = None
+                for f in session['metadata'].get('files', []):
+                    name = f.get("name", "").lower()
+                    if name.endswith((".jpg", ".jpeg", ".png")):
+                        cover_file = await self.archive_handler.download_file_stream(
+                            {"identifier": self.archive_handler.current_identifier, "name": f["name"]}
+                        )
+                        break
+
+                if cover_file:
+                    await self.client.send_file(self.channel_handler.channel_id, cover_file, caption=album_info)
+                    cover_file.close()
+                else:
+                    await self.channel_handler.send_message(album_info)
+
+                # Now upload tracks one by one (filename must be kept)
+                for i, file_info in enumerate(files):
+                    file_name = file_info['name']
+                    await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {file_name}")
+
+                    file_stream = await self.archive_handler.download_file_stream(file_info)
+                    if not file_stream:
+                        await event.edit(f"❌ Failed to download: {file_name}")
+                        continue
+
+                    success = await self.channel_handler.upload_file(
+                        file_stream, file_name, caption=None   # no caption, show filename only
                     )
-                    break
+                    file_stream.close()
 
-            if cover_file:
-                await self.client.send_file(self.channel_handler.channel_id, cover_file, caption=album_info)
-                cover_file.close()
-            else:
-                await self.channel_handler.send_message(album_info)
+                    if not success:
+                        await event.edit(f"❌ Failed to upload: {file_name}")
 
-            # Now upload tracks one by one (filename must be kept)
-            for i, file_info in enumerate(files):
-                file_name = file_info['name']
-                await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {file_name}")
+                # Clean up session
+                del self.user_sessions[user_id]
+                await event.edit("🎉 Album upload finished!")
 
-                file_stream = await self.archive_handler.download_file_stream(file_info)
-                if not file_stream:
-                    await event.edit(f"❌ Failed to download: {file_name}")
-                    continue
-
-                success = await self.channel_handler.upload_file(
-                    file_stream, file_name, caption=None   # no caption, show filename only
-                )
-                file_stream.close()
-
-                if not success:
-                    await event.edit(f"❌ Failed to upload: {file_name}")
-
-            # Clean up session
-            del self.user_sessions[user_id]
-            await event.edit("🎉 Album upload finished!")
-
-        except Exception as e:
-            logger.error(f"Error processing format selection: {e}")
-            await event.edit(f"❌ Error: {str(e)}")
-            del self.user_sessions[user_id]
-
+            except Exception as e:
+                logger.error(f"Error processing format selection: {e}")
+                await event.edit(f"❌ Error: {str(e)}")
+                del self.user_sessions[user_id]
 
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
