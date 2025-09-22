@@ -3,7 +3,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.9
+Version: 1.1.0
 Python 3.9+ compatible
 """
 
@@ -288,6 +288,7 @@ Choose a format to download and upload to the channel:
                     thumb_stream = None
                     if cover_bytes:
                         thumb_stream = io.BytesIO(cover_bytes)
+                        thumb_stream.name = "thumb.jpg"  # Ensure Telegram recognizes it as an image
                         thumb_stream.seek(0)
 
                     # Upload with thumb and caption
