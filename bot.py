@@ -10,7 +10,7 @@ Python 3.9+ compatible
 import os
 import logging
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import io
 import base64
 
