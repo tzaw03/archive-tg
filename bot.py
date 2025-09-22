@@ -13,6 +13,7 @@ import asyncio
 from typing import Dict, Any, Optional
 import io
 import base64
+import tempfile
 
 from telethon import TelegramClient, events, Button
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError
@@ -325,7 +326,13 @@ Choose a format to download and upload to the channel:
     async def add_metadata_to_audio(self, file_stream: io.BytesIO, file_info: Dict, item_metadata: Dict, cover_bytes: Optional[bytes], track_num: str, format_name: str):
         """Add metadata and embed album art to audio file stream in memory"""
         try:
-            file_stream.seek(0)
+            # Save stream to temporary file for mutagen compatibility
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format_name.lower()}') as temp_file:
+                file_stream.seek(0)
+                temp_file.write(file_stream.read())
+                temp_file_path = temp_file.name
+
+            # Load audio file with mutagen
             ext = format_name.lower()
             title = file_info.get('title', os.path.splitext(file_info['name'])[0])
             artist = file_info.get('creator', item_metadata.get('creator', 'Unknown Artist'))
@@ -335,9 +342,9 @@ Choose a format to download and upload to the channel:
 
             if ext == 'mp3':
                 try:
-                    audio = MP3(file_stream, ID3=ID3)
+                    audio = MP3(temp_file_path, ID3=ID3)
                 except ID3NoHeaderError:
-                    audio = MP3(file_stream)
+                    audio = MP3(temp_file_path)
                     audio.add_tags()
                 audio['TIT2'] = TIT2(encoding=3, text=title)
                 audio['TPE1'] = TPE1(encoding=3, text=artist)
@@ -346,10 +353,10 @@ Choose a format to download and upload to the channel:
                 audio['TRCK'] = TRCK(encoding=3, text=track)
                 if cover_bytes:
                     audio.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=cover_bytes))
-                audio.save(file_stream)
+                audio.save()
 
             elif ext == 'flac':
-                audio = FLAC(file_stream)
+                audio = FLAC(temp_file_path)
                 audio['title'] = title
                 audio['artist'] = artist
                 audio['album'] = album
@@ -361,10 +368,10 @@ Choose a format to download and upload to the channel:
                     picture.type = 3
                     picture.mime = 'image/jpeg'
                     audio.add_picture(picture)
-                audio.save(file_stream)
+                audio.save()
 
             elif ext == 'ogg':
-                audio = OggVorbis(file_stream)
+                audio = OggVorbis(temp_file_path)
                 audio['title'] = title
                 audio['artist'] = artist
                 audio['album'] = album
@@ -376,10 +383,10 @@ Choose a format to download and upload to the channel:
                     picture.type = 3
                     picture.mime = 'image/jpeg'
                     audio['metadata_block_picture'] = [base64.b64encode(picture.write()).decode('ascii')]
-                audio.save(file_stream)
+                audio.save()
 
             elif ext == 'wav':
-                audio = WAVE(file_stream)
+                audio = WAVE(temp_file_path)
                 if 'INFO' not in audio:
                     audio.add_tags()
                 audio.tags['INAM'] = title  # Title
@@ -388,9 +395,18 @@ Choose a format to download and upload to the channel:
                 audio.tags['ICRD'] = year  # Creation date
                 audio.tags['IPRT'] = track  # Part/Track number
                 # Note: WAV does not support embedded album art natively
-                audio.save(file_stream)
+                audio.save()
 
-            file_stream.seek(0)
+            # Reload the file stream with updated metadata
+            with open(temp_file_path, 'rb') as updated_file:
+                file_stream.seek(0)
+                file_stream.write(updated_file.read())
+                file_stream.seek(0)
+
+            # Clean up temporary file
+            import os
+            os.unlink(temp_file_path)
+
             logger.info(f"Metadata added to {file_info['name']}")
 
         except Exception as e:
