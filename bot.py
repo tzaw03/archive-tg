@@ -3,7 +3,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.7
+Version: 1.0.8
 Python 3.9+ compatible
 """
 
@@ -12,12 +12,20 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional
 import io
+import tempfile
+import base64
 
 from telethon import TelegramClient, events, Button
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 
 from archive_handler import ArchiveOrgHandler
 from telegram_handler import TelegramChannelHandler
+
+from mutagen.mp3 import MP3
+from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TDRC, TRCK, APIC
+from mutagen.flac import FLAC, Picture
+from mutagen.oggvorbis import OggVorbis
+from mutagen.wave import WAVE
 
 # Configure logging
 logging.basicConfig(
@@ -61,7 +69,7 @@ class ArchiveTelegramBot:
         welcome_text = """
 🤖 **Archive.org to Telegram Bot**
         
-I can download content from archive.org and upload it directly to your Telegram channel!
+I can download content from archive.org and upload it directly to your Telegram channel with album art and metadata!
 
 **Commands:**
 • `/download [archive.org URL]` - Download and upload content
@@ -81,7 +89,7 @@ I can download content from archive.org and upload it directly to your Telegram 
 1. Send me an archive.org URL with /download command
 2. I'll show you available formats (FLAC, MP3, WAV, etc.)
 3. Choose your preferred format
-4. I'll download and upload to the channel automatically
+4. I'll download and upload to the channel with album art and metadata
 
 **Supported formats:**
 • Audio: FLAC, MP3, WAV, OGG
@@ -90,9 +98,9 @@ I can download content from archive.org and upload it directly to your Telegram 
 • Documents: PDF, EPUB, TXT
 
 **Features:**
-• Direct streaming upload (no local storage)
+• Embedded album art and metadata
+• Direct streaming upload
 • Progress tracking
-• Automatic cleanup
 • Support for large files (up to 2GB)
         """
         await event.respond(help_text, parse_mode='markdown')
@@ -209,7 +217,7 @@ Choose a format to download and upload to the channel:
 💽 **Format:** {format_name}
                 """.strip()
 
-                # Try to get album cover bytes (prefer jpg/png from files)
+                # Try to get album cover bytes
                 cover_bytes = None
                 for f in session['metadata'].get('files', []):
                     name = f.get("name", "").lower()
@@ -230,11 +238,11 @@ Choose a format to download and upload to the channel:
                                 except:
                                     pass
 
-                # Send album cover with metadata if available, else text message
+                # Send album cover with metadata if available
                 if cover_bytes:
                     try:
                         album_cover_stream = io.BytesIO(cover_bytes)
-                        album_cover_stream.name = "album_art.jpg"  # Set a name for Telegram
+                        album_cover_stream.name = "album_art.jpg"
                         await self.client.send_file(CHANNEL_ID, album_cover_stream, caption=album_info)
                         logger.info("Album cover uploaded")
                     except Exception as e:
@@ -248,12 +256,10 @@ Choose a format to download and upload to the channel:
                 else:
                     await self.channel_handler.send_message(album_info)
 
-                # Upload tracks one by one with thumb (album art) and caption
+                # Upload tracks with embedded metadata and album art
                 for i, file_info in enumerate(files, 1):
                     file_name = file_info['name']
-                    base_name = os.path.splitext(os.path.basename(file_name))[0]
-                    # Simple caption: artist - track title (from filename)
-                    track_title = base_name.replace(f"{i:02d}. ", "").strip()  # Remove track number if present
+                    track_title = os.path.splitext(os.path.basename(file_name))[0].replace(f"{i:02d}. ", "").strip()
                     track_caption = f"{artist} - {track_title}"
 
                     await event.edit(f"📥 Uploading track {i}/{total_tracks}: {track_title}")
@@ -263,10 +269,23 @@ Choose a format to download and upload to the channel:
                         await event.edit(f"❌ Failed to download: {track_title}")
                         continue
 
+                    # Embed metadata and album art
+                    if format_name in ['FLAC', 'MP3', 'WAV', 'OGG']:
+                        await self.add_metadata_to_audio(
+                            file_stream,
+                            track_title,
+                            artist,
+                            album_name,
+                            release_date,
+                            str(i),
+                            format_name,
+                            cover_bytes
+                        )
+
                     # Reset stream position
                     file_stream.seek(0)
 
-                    # Prepare thumb stream (reuse cover_bytes)
+                    # Prepare thumb stream
                     thumb_stream = None
                     if cover_bytes:
                         thumb_stream = io.BytesIO(cover_bytes)
@@ -303,6 +322,90 @@ Choose a format to download and upload to the channel:
                 await event.edit(f"❌ Error: {str(e)}")
                 if user_id in self.user_sessions:
                     del self.user_sessions[user_id]
+
+    async def add_metadata_to_audio(self, file_stream: io.BytesIO, title: str, artist: str, album: str, date: str, track_num: str, format_name: str, cover_bytes: Optional[bytes]):
+        """Add metadata and album art to audio file stream in memory"""
+        try:
+            # Save stream to temporary file for mutagen compatibility
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format_name.lower()}') as temp_file:
+                file_stream.seek(0)
+                temp_file.write(file_stream.read())
+                temp_file_path = temp_file.name
+
+            # Load audio file with mutagen
+            ext = format_name.lower()
+            if ext == 'mp3':
+                try:
+                    audio = MP3(temp_file_path, ID3=ID3)
+                except ID3NoHeaderError:
+                    audio = MP3(temp_file_path)
+                    audio.add_tags()
+                audio['TIT2'] = TIT2(encoding=3, text=title)
+                audio['TPE1'] = TPE1(encoding=3, text=artist)
+                audio['TALB'] = TALB(encoding=3, text=album)
+                audio['TDRC'] = TDRC(encoding=3, text=date)
+                audio['TRCK'] = TRCK(encoding=3, text=track_num)
+                if cover_bytes:
+                    audio.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=cover_bytes))
+                audio.save()
+
+            elif ext == 'flac':
+                audio = FLAC(temp_file_path)
+                audio['title'] = title
+                audio['artist'] = artist
+                audio['album'] = album
+                audio['date'] = date
+                audio['tracknumber'] = track_num
+                if cover_bytes:
+                    picture = Picture()
+                    picture.data = cover_bytes
+                    picture.type = 3
+                    picture.mime = 'image/jpeg'
+                    audio.add_picture(picture)
+                audio.save()
+
+            elif ext == 'ogg':
+                audio = OggVorbis(temp_file_path)
+                audio['title'] = title
+                audio['artist'] = artist
+                audio['album'] = album
+                audio['date'] = date
+                audio['tracknumber'] = track_num
+                if cover_bytes:
+                    picture = Picture()
+                    picture.data = cover_bytes
+                    picture.type = 3
+                    picture.mime = 'image/jpeg'
+                    audio['metadata_block_picture'] = [base64.b64encode(picture.write()).decode('ascii')]
+                audio.save()
+
+            elif ext == 'wav':
+                audio = WAVE(temp_file_path)
+                if 'INFO' not in audio:
+                    audio.add_tags()
+                audio.tags['INAM'] = title  # Title
+                audio.tags['IART'] = artist  # Artist
+                audio.tags['IPRD'] = album  # Album/Product
+                audio.tags['ICRD'] = date  # Creation date
+                audio.tags['IPRT'] = track_num  # Part/Track number
+                # WAV does not support embedded album art natively
+                audio.save()
+
+            # Reload the file stream with updated metadata
+            with open(temp_file_path, 'rb') as updated_file:
+                file_stream.seek(0)
+                file_stream.write(updated_file.read())
+                file_stream.seek(0)
+
+            # Clean up temporary file
+            import os
+            os.unlink(temp_file_path)
+
+            logger.info(f"Metadata and album art added to {title}")
+
+        except Exception as e:
+            logger.error(f"Failed to add metadata to {title}: {e}")
+            file_stream.seek(0)  # Reset stream even on error
 
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
