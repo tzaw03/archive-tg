@@ -3,7 +3,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.8
+Version: 1.0.9
 Python 3.9+ compatible
 """
 
@@ -211,7 +211,6 @@ Choose a format to download and upload to the channel:
 
                 album_info = f"""
 🎵 **Title:** {album_name}
-👤 **Artist:** {artist}
 📅 **Release Date:** {release_date}
 🔢 **Total Tracks:** {total_tracks}
 💽 **Format:** {format_name}
