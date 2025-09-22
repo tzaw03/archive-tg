@@ -3,7 +3,7 @@
 """
 Archive.org to Telegram Channel Bot
 Author: Your Name
-Version: 1.0.6
+Version: 1.0.7
 Python 3.9+ compatible
 """
 
@@ -206,14 +206,19 @@ Choose a format to download and upload to the channel:
                 # --- Album-level metadata message ---
                 item_metadata = session['metadata'].get('metadata', {})
                 album_name = item_metadata.get('title', 'Unknown Album')
+                artist = item_metadata.get('creator', 'Unknown Artist')
                 release_date = item_metadata.get('date', 'Unknown Date')
                 total_tracks = len(files)
+                provider = format_name  # Use format as provider (e.g., FLAC -> Lossless)
 
                 album_info = f"""
-🎵 **Title:** {album_name}
-📅 **Release Date:** {release_date}
-🔢 **Total Tracks:** {total_tracks}
-💽 **Format:** {format_name}
+**Title:** {album_name}
+**Artist:** {artist}
+**Release Date:** {release_date}
+**Total Tracks:** {total_tracks}
+**Format:** {format_name}
+**Provider:** {provider}
+**Explicit:** False
                 """.strip()
 
                 # Try to get album cover bytes (jpg/png)
@@ -242,7 +247,7 @@ Choose a format to download and upload to the channel:
                     try:
                         album_cover_stream = io.BytesIO(cover_bytes)
                         album_cover_stream.seek(0)
-                        await self.client.send_file(self.channel_handler.channel_id, album_cover_stream, caption=album_info)
+                        await self.client.send_file(self.channel_handler.channel_id, album_cover_stream, caption=album_info, parse_mode='markdown')
                     finally:
                         try:
                             album_cover_stream.close()
@@ -254,9 +259,9 @@ Choose a format to download and upload to the channel:
                 # Now upload tracks one by one
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
-                    # use filename without extension as caption (no artist/provider)
+                    # Use artist - title format for caption
                     track_title = os.path.splitext(file_name)[0]
-                    track_caption = f"{track_title}"
+                    track_caption = f"{artist} - {track_title}"
 
                     await event.edit(f"📥 Uploading track {i+1}/{len(files)}: {track_title}")
 
