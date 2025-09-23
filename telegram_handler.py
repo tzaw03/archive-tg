@@ -1,93 +1,109 @@
 #!/usr/bin/env python3
 """
 Telegram Channel Handler Module
-Handles all Telegram channel operations, including metadata embedding.
+Handles all Telegram channel operations
 """
 
 import asyncio
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, IO
 from io import BytesIO
-
-from telethon import TelegramClient
-from telethon.tl.types import DocumentAttributeAudio
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError
-
 import mutagen
-from mutagen.flac import Picture as FLACPicture
-from mutagen.id3 import APIC
+from mutagen.flac import FLAC
+from mutagen.id3 import ID3, APIC
+from telethon import TelegramClient
+from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo
+from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 
 logger = logging.getLogger(__name__)
 
 class TelegramChannelHandler:
-    def __init__(self, client: TelegramClient, channel_id: int):
+    def __init__(self, client: TelegramClient, channel_id: str):
         self.client = client
         self.channel_id = channel_id
-
-    def embed_metadata(self, file_stream: BytesIO, file_name: str, metadata: Dict[str, Any], art_stream: Optional[BytesIO]) -> BytesIO:
-        output_stream = BytesIO()
+    
+    async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: dict = None) -> bool:
+        """Upload file to Telegram channel with embedded metadata"""
         try:
-            file_stream.seek(0)
-            # ပြင်ဆင်ချက်- fileobj=file_stream ဟု အတိအကျသတ်မှတ်ပေးထားသည်
-            audio = mutagen.File(fileobj=file_stream, easy=True) 
-            if audio is None: raise ValueError("Cannot process audio file with mutagen.")
-
-            audio.delete() # Clear existing tags
-            if metadata.get('title'): audio['title'] = metadata['title']
-            if metadata.get('artist'): audio['artist'] = metadata['artist']
-            if metadata.get('album'): audio['album'] = metadata['album']
-            if metadata.get('date'): audio['date'] = metadata['date']
-            audio.save()
-
-            file_stream.seek(0)
-            # ပြင်ဆင်ချက်- fileobj=file_stream ဟု အတိအကျသတ်မှတ်ပေးထားသည်
-            audio_full = mutagen.File(fileobj=file_stream)
-            if art_stream:
-                art_stream.seek(0)
-                art_data = art_stream.read()
-                
-                if file_name.lower().endswith('.flac'):
-                    pic = FLACPicture()
-                    pic.type = 3
-                    pic.mime = 'image/jpeg'
-                    pic.data = art_data
-                    audio_full.add_picture(pic)
-                elif file_name.lower().endswith('.mp3'):
-                    audio_full.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=art_data))
-            
-            audio_full.save(output_stream)
-            output_stream.seek(0)
-            logger.info(f"Successfully embedded metadata for {file_name}")
-            return output_stream
-            
-        except Exception as e:
-            logger.error(f"Mutagen error for {file_name}: {e}. Sending original file.")
-            file_stream.seek(0) # Return original stream on failure
-            return file_stream
-
-    async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: Dict[str, Any]) -> bool:
-        try:
+            # Determine file type and attributes
+            file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             attributes = []
-            if file_name.lower().endswith(('.mp3', '.flac', '.wav', '.ogg')):
+            
+            if file_ext in ['mp3', 'flac', 'wav', 'ogg']:
                 attributes.append(DocumentAttributeAudio(
-                    duration=0,
-                    title=metadata.get('title', file_name),
-                    performer=metadata.get('artist', "Unknown Artist")
+                    duration=0,  # Will be auto-detected
+                    title=file_name,
+                    performer="Archive.org"
                 ))
-
+            elif file_ext in ['mp4', 'mkv', 'avi']:
+                attributes.append(DocumentAttributeVideo(
+                    duration=0,  # Will be auto-detected
+                    w=0,  # Will be auto-detected
+                    h=0   # Will be auto-detected
+                ))
+            
+            # Embed metadata using Mutagen
+            if file_ext in ['mp3', 'flac'] and metadata:
+                file_stream.seek(0)
+                temp_file = BytesIO(file_stream.read())
+                temp_file.seek(0)
+                
+                if file_ext == 'flac':
+                    audio = FLAC(temp_file)
+                    audio["title"] = metadata.get("title", file_name)
+                    audio["artist"] = metadata.get("creator", "Unknown Artist")
+                    audio["album"] = metadata.get("album", "Archive.org Collection")
+                    if "album_art" in metadata and metadata["album_art"]:
+                        audio["coverart"] = mutagen.flac.Picture()
+                        audio["coverart"].data = metadata["album_art"]
+                    audio.save(temp_file)
+                elif file_ext == 'mp3':
+                    audio = ID3(temp_file)
+                    audio["TIT2"] = mutagen.id3.TIT2(text=metadata.get("title", file_name))
+                    audio["TPE1"] = mutagen.id3.TPE1(text=metadata.get("creator", "Unknown Artist"))
+                    audio["TALB"] = mutagen.id3.TALB(text=metadata.get("album", "Archive.org Collection"))
+                    if "album_art" in metadata and metadata["album_art"]:
+                        audio["APIC"] = APIC(
+                            encoding=3,
+                            mime="image/jpeg",
+                            type=3,
+                            desc="Cover",
+                            data=metadata["album_art"]
+                        )
+                    audio.save(temp_file)
+                
+                temp_file.seek(0)
+                file_stream = temp_file
+            
+            # Upload file
+            logger.info(f"Uploading {file_name} to channel...")
+            file_stream.seek(0)
+            
             await self.client.send_file(
                 self.channel_id,
-                file=file_stream,
+                file_stream,
                 caption=caption,
+                file_name=file_name,
                 attributes=attributes,
+                allow_cache=False,
                 force_document=False,
                 supports_streaming=True
             )
+            
+            logger.info(f"Successfully uploaded: {file_name}")
             return True
+            
         except FloodWaitError as e:
-            logger.warning(f"Flood wait for {e.seconds} seconds.")
+            logger.warning(f"Flood wait error: {e}")
             await asyncio.sleep(e.seconds)
-            return await self.upload_file(file_stream, file_name, caption, metadata) # Retry
-        except Exception as e:
-            logger.error(f"Error uploading {file_name}: {e}")
+            return await self.upload_file(file_stream, file_name, caption, metadata)
+            
+        except ChatWriteForbiddenError:
+            logger.error("Cannot write to channel. Check bot permissions.")
             return False
+            
+        except Exception as e:
+            logger.error(f"Error uploading file: {e}")
+            return False
+    
+    # [Keep the rest of the methods (send_message, send_progress_update) unchanged]
