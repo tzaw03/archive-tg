@@ -28,10 +28,11 @@ class TelegramChannelHandler:
         output_stream = BytesIO()
         try:
             file_stream.seek(0)
-            audio = mutagen.File(file_stream, easy=True)
-            if audio is None: raise ValueError("Cannot process audio file.")
+            # ပြင်ဆင်ချက်- fileobj=file_stream ဟု အတိအကျသတ်မှတ်ပေးထားသည်
+            audio = mutagen.File(fileobj=file_stream, easy=True) 
+            if audio is None: raise ValueError("Cannot process audio file with mutagen.")
 
-            audio.delete()
+            audio.delete() # Clear existing tags
             if metadata.get('title'): audio['title'] = metadata['title']
             if metadata.get('artist'): audio['artist'] = metadata['artist']
             if metadata.get('album'): audio['album'] = metadata['album']
@@ -39,10 +40,12 @@ class TelegramChannelHandler:
             audio.save()
 
             file_stream.seek(0)
-            audio_full = mutagen.File(file_stream)
+            # ပြင်ဆင်ချက်- fileobj=file_stream ဟု အတိအကျသတ်မှတ်ပေးထားသည်
+            audio_full = mutagen.File(fileobj=file_stream)
             if art_stream:
                 art_stream.seek(0)
                 art_data = art_stream.read()
+                
                 if file_name.lower().endswith('.flac'):
                     pic = FLACPicture()
                     pic.type = 3
@@ -54,10 +57,12 @@ class TelegramChannelHandler:
             
             audio_full.save(output_stream)
             output_stream.seek(0)
+            logger.info(f"Successfully embedded metadata for {file_name}")
             return output_stream
+            
         except Exception as e:
             logger.error(f"Mutagen error for {file_name}: {e}. Sending original file.")
-            file_stream.seek(0)
+            file_stream.seek(0) # Return original stream on failure
             return file_stream
 
     async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: Dict[str, Any]) -> bool:
@@ -80,8 +85,9 @@ class TelegramChannelHandler:
             )
             return True
         except FloodWaitError as e:
+            logger.warning(f"Flood wait for {e.seconds} seconds.")
             await asyncio.sleep(e.seconds)
-            return await self.upload_file(file_stream, file_name, caption, metadata)
+            return await self.upload_file(file_stream, file_name, caption, metadata) # Retry
         except Exception as e:
             logger.error(f"Error uploading {file_name}: {e}")
             return False
