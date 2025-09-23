@@ -1,4 +1,3 @@
-# archive_handler.py
 #!/usr/bin/env python3
 """
 Archive.org Handler Module
@@ -19,8 +18,7 @@ class ArchiveOrgHandler:
         self.base_url = "https://archive.org"
         self.metadata_endpoint = "/metadata/{identifier}"
         self.download_endpoint = "/download/{identifier}/{filename}"
-        self.session = None
-        self.current_identifier = None   # <-- keep identifier here
+        self.session: Optional[aiohttp.ClientSession] = None
         
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -30,12 +28,14 @@ class ArchiveOrgHandler:
         if self.session:
             await self.session.close()
     
-    async def get_session(self):
+    async def get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session"""
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession()
         return self.session
     
     def extract_identifier(self, url: str) -> Optional[str]:
+        """Extract identifier from archive.org URL"""
         try:
             parsed = urlparse(url)
             path_parts = parsed.path.strip('/').split('/')
@@ -44,119 +44,119 @@ class ArchiveOrgHandler:
                 idx = path_parts.index('details')
                 if idx + 1 < len(path_parts):
                     return path_parts[idx + 1]
-            
-            if len(path_parts) == 1 and path_parts[0]:
-                return path_parts[0]
-                
             return None
         except Exception as e:
             logger.error(f"Error extracting identifier from URL {url}: {e}")
             return None
     
     async def get_metadata(self, url: str) -> Optional[Dict[str, Any]]:
+        """Get metadata for archive.org item"""
         identifier = self.extract_identifier(url)
         if not identifier:
             logger.error("Could not extract identifier from URL")
             return None
-        
-        self.current_identifier = identifier   # <-- save identifier
         
         try:
             session = await self.get_session()
             metadata_url = f"{self.base_url}{self.metadata_endpoint.format(identifier=identifier)}"
             
             async with session.get(metadata_url) as response:
-                if response.status == 200:
-                    metadata = await response.json()
-                    logger.info(f"Successfully fetched metadata for {identifier}")
-                    return metadata
-                else:
-                    logger.error(f"Failed to fetch metadata: {response.status}")
-                    return None
+                response.raise_for_status()
+                metadata = await response.json()
+                # Add identifier to metadata for later use
+                if 'files' in metadata:
+                    for f in metadata['files']:
+                        if 'identifier' not in f:
+                            f['identifier'] = identifier
+                logger.info(f"Successfully fetched metadata for {identifier}")
+                return metadata
                     
+        except aiohttp.ClientError as e:
+            logger.error(f"Failed to fetch metadata for {identifier}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error fetching metadata: {e}")
             return None
     
     def get_available_formats(self, metadata: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+        """Get available download formats from metadata"""
         formats = {}
         files = metadata.get('files', [])
         
         format_categories = {
-            'FLAC': ['flac'],
-            'MP3': ['mp3'],
-            'WAV': ['wav'],
-            'OGG': ['ogg', 'oga'],
-            'MP4': ['mp4', 'm4v'],
-            'MKV': ['mkv'],
-            'AVI': ['avi'],
-            'PDF': ['pdf'],
-            'EPUB': ['epub'],
-            'TXT': ['txt'],
-            'JPG': ['jpg', 'jpeg'],
-            'PNG': ['png'],
-            'GIF': ['gif'],
-            'ZIP': ['zip'],
-            'TORRENT': ['torrent']
+            'FLAC': ['flac'], 'MP3': ['mp3'], 'WAV': ['wav'], 'OGG': ['ogg', 'oga'],
+            'MP4': ['mp4'], 'MKV': ['mkv'], 'PDF': ['pdf'], 'EPUB': ['epub']
         }
         
         for file_info in files:
             file_name = file_info.get('name', '')
-            if not file_name:
+            source = file_info.get('source')
+            if not file_name or source != 'original':
                 continue
-            
-            if file_name.endswith(('_meta.xml', '_files.xml', '_chocr.html', '_djvu.txt')):
-                continue
-            
-            file_size = file_info.get('size', 0)
-            try:
-                if int(file_size) < 1024:
-                    continue
-            except Exception:
-                # if size not an int or missing, skip very small files
-                pass
-            
+
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             
             for format_name, extensions in format_categories.items():
                 if file_ext in extensions:
                     if format_name not in formats:
                         formats[format_name] = []
-                    # add identifier for download
-                    file_info['identifier'] = self.current_identifier
                     formats[format_name].append(file_info)
                     break
         
         return dict(sorted(formats.items(), key=lambda x: len(x[1]), reverse=True))
-    
-    async def download_file_stream(self, file_info: Dict[str, Any]) -> Optional[io.BytesIO]:
+
+    async def download_file_stream(self, identifier: str, filename: str) -> Optional[io.BytesIO]:
+        """Download file as a BytesIO stream"""
+        session = await self.get_session()
+        download_url = f"{self.base_url}{self.download_endpoint.format(identifier=identifier, filename=filename)}"
+        
         try:
-            session = await self.get_session()
-            identifier = file_info.get('identifier', '')
-            file_name = file_info.get('name', '')
-            
-            if not identifier or not file_name:
-                logger.error("Missing identifier or filename")
-                return None
-            
-            download_url = f"{self.base_url}{self.download_endpoint.format(identifier=identifier, filename=file_name)}"
-            logger.info(f"Downloading: {file_name}")
-            
-            file_stream = io.BytesIO()
-            
+            logger.info(f"Downloading stream for: {filename}")
             async with session.get(download_url) as response:
-                if response.status != 200:
-                    logger.error(f"Failed to download file: {response.status}")
-                    return None
-                
-                async for chunk in response.content.iter_chunked(8192):
-                    if chunk:
-                        file_stream.write(chunk)
-                
-                file_stream.seek(0)
-                logger.info(f"Successfully downloaded: {file_name}")
-                return file_stream
-                
-        except Exception as e:
-            logger.error(f"Error downloading file: {e}")
+                response.raise_for_status()
+                content = await response.read()
+                logger.info(f"Successfully downloaded stream for: {filename}")
+                return io.BytesIO(content)
+        except aiohttp.ClientError as e:
+            logger.error(f"Failed to download file {filename}: {e}")
             return None
+        except Exception as e:
+            logger.error(f"Error downloading file stream for {filename}: {e}")
+            return None
+            
+    async def get_album_art_stream(self, metadata: Dict[str, Any]) -> Optional[io.BytesIO]:
+        """Finds and downloads the album art as a BytesIO stream."""
+        files = metadata.get('files', [])
+        identifier = metadata.get('metadata', {}).get('identifier')
+        
+        if not identifier:
+            return None
+            
+        # Prioritized list of common cover art filenames
+        art_candidates = ['cover.jpg', 'folder.jpg', 'front.jpg']
+        art_file_to_download = None
+
+        # First, check for common names
+        for file_info in files:
+            if file_info.get('name', '').lower() in art_candidates:
+                art_file_to_download = file_info['name']
+                break
+        
+        # If not found, check metadata for a specified image
+        if not art_file_to_download and metadata.get('misc', {}).get('image'):
+            art_file_to_download = metadata['misc']['image']
+
+        # If still not found, take the first available JPG or PNG
+        if not art_file_to_download:
+            for file_info in files:
+                file_name = file_info.get('name', '').lower()
+                if file_name.endswith('.jpg') or file_name.endswith('.jpeg') or file_name.endswith('.png'):
+                     art_file_to_download = file_info['name']
+                     break
+        
+        if art_file_to_download:
+            logger.info(f"Found album art: {art_file_to_download}")
+            return await self.download_file_stream(identifier, art_file_to_download)
+        
+        logger.warning("No album art found for this item.")
+        return None
