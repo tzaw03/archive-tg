@@ -40,7 +40,6 @@ async def download_and_upload_file(self, file_info: Dict[str, Any], metadata: Di
         # Create caption
         caption = f"""
 📁 **{title}**
-👤 {creator}
 📅 {date}
 💾 {format_name} format
 📊 {self.format_file_size(file_size)}
