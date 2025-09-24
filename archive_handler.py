@@ -164,12 +164,16 @@ class ArchiveOrgHandler:
                     return None
                 
                 # Ensure content-length is an integer
-                content_length = response.headers.get('content-length', '0')
-                try:
-                    total_size = int(float(str(content_length).strip()))  # Convert to float first to handle decimals, then to int
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid content-length: {content_length}, defaulting to 0")
+                content_length = response.headers.get('content-length', None)
+                if content_length is None:
+                    logger.warning("No content-length header, defaulting to 0")
                     total_size = 0
+                else:
+                    try:
+                        total_size = int(float(str(content_length).strip()))
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid content-length: {content_length}, defaulting to 0")
+                        total_size = 0
                 
                 downloaded = 0
                 
