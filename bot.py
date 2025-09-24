@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
 Bot Main Script
-Handles the main bot logic and integrates with Telegram handler
+Handles the main bot logic and integrates with Telegram handler using Pyrogram
 """
 
 import os
 import logging
 from telegram_handler import TelegramChannelHandler
+from pyrogram import Client, filters
+from pyrogram.types import Message
+import aiohttp
+from io import BytesIO
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -23,29 +27,51 @@ if not all([api_id, api_hash, bot_token, channel_id]):
     exit(1)
 
 # Initialize Telegram handler
-try:
-    handler = TelegramChannelHandler(api_id, api_hash, bot_token, channel_id)
-    logger.info("Telegram handler initialized successfully.")
-except Exception as e:
-    logger.error(f"Failed to initialize Telegram handler: {e}")
-    exit(1)
+handler = TelegramChannelHandler(api_id, api_hash, bot_token, channel_id)
+logger.info("Telegram handler initialized successfully.")
 
-# Example command handler (replace with your actual bot logic)
-async def handle_command(command: str, url: str):
-    if command == "/download":
+# Initialize Pyrogram client
+app = Client("bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+
+# Command handler for /download
+@app.on_message(filters.command("download"))
+async def download_command(client: Client, message: Message):
+    try:
+        if len(message.command) < 2:
+            await message.reply("Please provide a URL after /download command. Example: /download https://example.com")
+            return
+
+        url = message.command[1]
         logger.info(f"Received download command for URL: {url}")
-        # Add your download and upload logic here
-        # Example: Call handler.upload_file with appropriate file stream and metadata
-        pass
 
-# Main event loop (example structure)
+        # Download the file using aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    await message.reply("Failed to download the file. Check the URL.")
+                    return
+                file_content = await response.read()
+                file_stream = BytesIO(file_content)
+                file_name = url.split("/")[-1] or "downloaded_file"
+                caption = f"Downloaded from {url}"
+
+        # Upload the file using the handler
+        success = await handler.upload_file(file_stream, file_name, caption)
+        if success:
+            await message.reply(f"Successfully uploaded {file_name} to the channel.")
+        else:
+            await message.reply("Failed to upload the file. Check logs for details.")
+    except Exception as e:
+        logger.error(f"Error in download command: {e}")
+        await message.reply("An error occurred. Please try again later.")
+
+# Start the bot with proper cleanup
 if __name__ == "__main__":
-    import asyncio
-
-    async def main():
-        logger.info("Bot started. Listening for commands...")
-        # Simulate a command (replace with actual bot framework like Pyrogram's on_message)
-        await handle_command("/download", "https://archive.org/details/cd06_beautiful_female_voice_2_sacd_011__mlib")
-        # Add your bot's main loop or event handler here
-
-    asyncio.run(main())
+    logger.info("Bot started. Listening for commands...")
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        logger.info("Stopping bot...")
+        handler.stop()  # Ensure proper cleanup
+    finally:
+        handler.stop()  # Final cleanup
