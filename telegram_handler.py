@@ -13,7 +13,7 @@ from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB
 from telethon import TelegramClient
 from telethon.tl.types import InputPeerChannel, DocumentAttributeAudio, DocumentAttributeVideo
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError, ValueError
+from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class TelegramChannelHandler:
                     logger.error(f"Failed to resolve channel entity for ID: {self.channel_id}. Ensure bot is invited and has permissions.")
                     return False
                 logger.info(f"Successfully resolved channel entity for ID: {self.channel_id}")
-            except ValueError as e:
+            except ValueError as e:  # Use built-in ValueError
                 logger.error(f"Invalid channel ID format: {e}. Please ensure CHANNEL_ID is correct (e.g., '-1003031099376').")
                 return False
             except Exception as e:
