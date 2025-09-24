@@ -8,7 +8,7 @@ import asyncio
 import aiohttp
 import logging
 from typing import Dict, List, Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import io
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,7 @@ class ArchiveOrgHandler:
         for file_info in files:
             file_name = file_info.get('name', '')
             if not file_name:
+                logger.warning(f"File info missing name: {file_info}")
                 continue
             
             # Skip metadata files
@@ -123,7 +124,7 @@ class ArchiveOrgHandler:
                 file_size = 0
             
             # Skip very small files (likely thumbnails or metadata)
-            if file_size < 1024:  
+            if file_size < 1024:
                 continue
             
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
@@ -135,7 +136,7 @@ class ArchiveOrgHandler:
                         formats[format_name] = []
                     # Ensure identifier is present, use metadata identifier as fallback
                     file_info_with_id = file_info.copy()
-                    if 'identifier' not in file_info_with_id or not file_info_with_id['identifier']:
+                    if 'identifier' not in file_info_with_id or not file_info_with_id.get('identifier'):
                         file_info_with_id['identifier'] = metadata.get('metadata', {}).get('identifier', '')
                     formats[format_name].append(file_info_with_id)
                     break
@@ -176,7 +177,11 @@ class ArchiveOrgHandler:
                     try:
                         total_size = int(content_length)
                     except (ValueError, TypeError):
-                        total_size = 0
+                        # sometimes content-length can be a float-like string; try float then int
+                        try:
+                            total_size = int(float(str(content_length).strip()))
+                        except (ValueError, TypeError):
+                            total_size = 0
                 
                 downloaded = 0
                 
@@ -188,7 +193,8 @@ class ArchiveOrgHandler:
                         # Log progress for large files
                         if total_size > 0 and total_size > 10 * 1024 * 1024:  # Files larger than 10MB
                             progress = (downloaded / total_size) * 100
-                            if int(progress) % 10 == 0:  # Log every 10%
+                            # log only at whole percent for clarity (prevents spam)
+                            if int(progress) % 10 == 0:
                                 logger.info(f"Download progress: {progress:.1f}%")
                 
                 file_stream.seek(0)
