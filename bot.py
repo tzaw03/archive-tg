@@ -23,7 +23,7 @@ app = Client("archive_bot_session", api_id=API_ID, api_hash=API_HASH, bot_token=
 
 archive_handler = ArchiveOrgHandler()
 channel_handler = TelegramChannelHandler(app, CHANNEL_ID)
-user_sessions: Dict[int, Dict[str, Any]] = {}
+user_sessions: Dict[str, Dict[str, Any]] = {} # Changed key to string for session_key
 
 @app.on_message(filters.command(["start", "help"]))
 async def handle_start(client, message):
@@ -44,7 +44,9 @@ async def handle_download(client, message):
         await status_msg.edit_text("❌ Could not fetch metadata.")
         return
 
-    session_key = f"{user_id}_{message.message_id}"
+    # --- THIS IS THE FIX ---
+    session_key = f"{user_id}_{message.id}" # Changed from message.message_id to message.id
+    
     user_sessions[session_key] = {'metadata': metadata}
     formats = archive_handler.get_available_formats(metadata)
     if not formats:
@@ -55,6 +57,7 @@ async def handle_download(client, message):
         [InlineKeyboardButton(f"{name} ({len(files)} files)", f"format_{name}_{session_key}")]
         for name, files in formats.items()
     ]
+    buttons.append([InlineKeyboardButton("✖️ Cancel", f"cancel_{session_key}")])
     keyboard = InlineKeyboardMarkup(buttons)
     
     item_title = metadata.get('metadata', {}).get('title', 'Unknown Item')
@@ -74,10 +77,17 @@ async def handle_button_press(client, callback_query):
             return
 
         await callback_query.edit_message_text(f"✅ Format '{format_name}' selected. Processing...")
-        await process_album_download(session, format_name, user_id)
+        asyncio.create_task(process_album_download(session, format_name, user_id))
+    
+    elif data.startswith('cancel_'):
+        session_key = data.replace('cancel_', '')
+        if session_key in user_sessions:
+            del user_sessions[session_key]
+        await callback_query.edit_message_text("Operation cancelled.")
+
 
 async def process_album_download(session: dict, format_name: str, user_id: int):
-    temp_dir = f"/tmp/archive_bot_{user_id}_{format_name}"
+    temp_dir = f"/tmp/archive_bot_{user_id}_{format_name.replace(' ', '_')}"
     os.makedirs(temp_dir, exist_ok=True)
     
     try:
