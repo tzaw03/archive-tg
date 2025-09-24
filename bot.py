@@ -232,23 +232,27 @@ Choose a format to download and upload to the channel:
     async def download_and_upload_file(self, file_info: Dict[str, Any], metadata: Dict[str, Any], format_name: str) -> bool:
         """Download file from archive.org and upload to Telegram channel"""
         try:
+            # Get item metadata for caption and tags
+            item_metadata = metadata.get('metadata', {})
+            identifier = item_metadata.get('identifier', '')
+            if not identifier:
+                logger.error("Missing item identifier")
+                return False
+            
             # Download file stream
-            file_stream = await self.archive_handler.download_file_stream(file_info)
+            file_name = file_info.get('name', '')
+            file_stream = await self.archive_handler.download_file_stream(identifier, file_name)
             
             if not file_stream:
                 return False
             
             # Get file metadata
-            file_name = file_info['name']
             file_size = file_info.get('size', 0)
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             
-            # Get item metadata for caption and tags
-            item_metadata = metadata.get('metadata', {})
             title = item_metadata.get('title', 'Unknown Title')
             creator = item_metadata.get('creator', 'Unknown Creator')
             date = item_metadata.get('date', 'Unknown Date')
-            identifier = item_metadata.get('identifier', '')
             
             # Get thumbnail if applicable
             thumb_stream = None
@@ -277,7 +281,6 @@ Choose a format to download and upload to the channel:
             # Create caption
             caption = f"""
 📁 **{title}**
-👤 {creator}
 📅 {date}
 💾 {format_name} format
 📊 {self.format_file_size(file_size)}
