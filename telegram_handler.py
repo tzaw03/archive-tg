@@ -136,7 +136,11 @@ class TelegramChannelHandler:
     def stop(self):
         """Manually stop the client"""
         if self.client.is_connected:
-            asyncio.run_coroutine_threadsafe(self.client.stop(), asyncio.get_event_loop())
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(self.client.stop(), loop)
+            else:
+                asyncio.run(self.client.stop())
 
     def __del__(self):
         """Cleanup client on object deletion with safe handling"""
