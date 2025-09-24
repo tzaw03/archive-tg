@@ -48,13 +48,15 @@ class TelegramChannelHandler:
     async def upload_file(self, file_path: str, caption: str, track_meta: Dict[str, Any], thumb_path: Optional[str]) -> bool:
         file_name = os.path.basename(file_path)
         try:
+            # --- THIS IS THE FIX ---
+            # Set performer to an empty string to only show the title
             await self.client.send_audio(
                 chat_id=self.channel_id,
                 audio=file_path,
                 caption=caption,
                 thumb=thumb_path,
                 title=track_meta.get('title', ''),
-                performer=track_meta.get('artist', ''),
+                performer="",  # <--- Hides the artist/performer name from display
                 file_name=file_name
             )
             return True
