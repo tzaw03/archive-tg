@@ -7,7 +7,7 @@ Handles all archive.org API interactions
 import asyncio
 import aiohttp
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 import io
 
@@ -83,10 +83,6 @@ class ArchiveOrgHandler:
         formats = {}
         files = metadata.get('files', [])
         
-        if not files:
-            logger.error("No files found in metadata")
-            return formats
-        
         # Define format categories
         format_categories = {
             'FLAC': ['flac'],
@@ -109,7 +105,6 @@ class ArchiveOrgHandler:
         for file_info in files:
             file_name = file_info.get('name', '')
             if not file_name:
-                logger.warning(f"File info missing name: {file_info}")
                 continue
             
             # Skip metadata files
@@ -117,13 +112,8 @@ class ArchiveOrgHandler:
                 continue
             
             # Skip small files (likely thumbnails or metadata)
-            raw_size = file_info.get('size', 0)
-            try:
-                file_size = int(raw_size)
-            except (ValueError, TypeError):
-                file_size = 0
-            
-            if file_size < 1024:  # Less than 1KB
+            file_size = file_info.get('size', 0)
+            if int(file_size) < 1024:  # Less than 1KB
                 continue
             
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
@@ -133,11 +123,7 @@ class ArchiveOrgHandler:
                 if file_ext in extensions:
                     if format_name not in formats:
                         formats[format_name] = []
-                    # Ensure identifier is present, use metadata identifier as fallback
-                    file_info_with_id = file_info.copy()
-                    if 'identifier' not in file_info_with_id or not file_info_with_id.get('identifier'):
-                        file_info_with_id['identifier'] = metadata.get('metadata', {}).get('identifier', '')
-                    formats[format_name].append(file_info_with_id)
+                    formats[format_name].append(file_info)
                     break
         
         # Sort formats by file count
@@ -153,7 +139,7 @@ class ArchiveOrgHandler:
             file_name = file_info.get('name', '')
             
             if not identifier or not file_name:
-                logger.error(f"Missing identifier or filename in file_info: {file_info}")
+                logger.error("Missing identifier or filename")
                 return None
             
             download_url = f"{self.base_url}{self.download_endpoint.format(identifier=identifier, filename=file_name)}"
@@ -168,21 +154,8 @@ class ArchiveOrgHandler:
                     logger.error(f"Failed to download file: {response.status}")
                     return None
                 
-                # Ensure content-length is an integer
-                content_length = response.headers.get('content-length', None)
-                if content_length is None:
-                    total_size = 0
-                else:
-                    try:
-                        total_size = int(content_length)
-                    except (ValueError, TypeError):
-                        try:
-                            total_size = int(float(str(content_length).strip()))
-                        except (ValueError, TypeError):
-                            total_size = 0
-                
+                total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
-                last_logged_progress = -1
                 
                 async for chunk in response.content.iter_chunked(8192):
                     if chunk:
@@ -190,29 +163,68 @@ class ArchiveOrgHandler:
                         downloaded += len(chunk)
                         
                         # Log progress for large files
-                        if total_size > 0 and total_size > 10 * 1024 * 1024:  # Files larger than 10MB
+                        if total_size > 10 * 1024 * 1024:  # Files larger than 10MB
                             progress = (downloaded / total_size) * 100
-                            current_progress = int(progress)
-                            if current_progress % 10 == 0 and current_progress != last_logged_progress:
+                            if int(progress) % 10 == 0:  # Log every 10%
                                 logger.info(f"Download progress: {progress:.1f}%")
-                                last_logged_progress = current_progress
-            
-            file_stream.seek(0)
-            logger.info(f"Successfully downloaded: {file_name} ({self.format_file_size(downloaded)})")
-            return file_stream
+                
+                file_stream.seek(0)
+                logger.info(f"Successfully downloaded: {file_name} ({self.format_file_size(downloaded)})")
+                return file_stream
                 
         except Exception as e:
             logger.error(f"Error downloading file: {e}")
             return None
     
+    async def get_item_thumbnail(self, identifier: str) -> Optional[Tuple[io.BytesIO, str]]:
+        """Get item thumbnail stream and MIME type"""
+        try:
+            # Try standard thumbnail service
+            thumb_url = f"https://archive.org/services/img/{identifier}"
+            session = await self.get_session()
+            
+            async with session.get(thumb_url, allow_redirects=True) as response:
+                if response.status == 200:
+                    mime = response.headers.get('Content-Type', 'image/jpeg')
+                    stream = io.BytesIO(await response.read())
+                    logger.info(f"Successfully fetched thumbnail from service for {identifier}")
+                    return stream, mime
+            
+            # Fallback to metadata files
+            metadata = await self.get_metadata(f"https://archive.org/details/{identifier}")
+            if not metadata:
+                return None
+            
+            files = metadata.get('files', [])
+            thumb_candidates = []
+            
+            for file_info in files:
+                file_name = file_info.get('name', '').lower()
+                file_format = file_info.get('format', '').lower()
+                
+                if file_format in ['jpeg', 'jpg', 'png'] and ('thumb' in file_name or 'cover' in file_name or 'art' in file_name):
+                    thumb_candidates.append(file_info)
+            
+            if thumb_candidates:
+                # Prefer the one with 'thumb' in name
+                thumb_candidates.sort(key=lambda x: 'thumb' in x['name'].lower(), reverse=True)
+                selected = thumb_candidates[0]
+                stream = await self.download_file_stream(selected)
+                if stream:
+                    mime = 'image/png' if selected['name'].lower().endswith('.png') else 'image/jpeg'
+                    logger.info(f"Successfully fetched fallback thumbnail: {selected['name']}")
+                    return stream, mime
+            
+            logger.warning(f"No thumbnail found for {identifier}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching thumbnail: {e}")
+            return None
+    
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
         """Format file size in human readable format"""
-        try:
-            size_bytes = int(size_bytes)
-        except (ValueError, TypeError):
-            return "Unknown size"
-        
         if size_bytes == 0:
             return "0 B"
         
