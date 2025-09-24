@@ -247,7 +247,8 @@ Choose a format to download and upload to the channel:
                 return False
             
             # Get file metadata
-            file_size = file_info.get('size', 0)
+            file_size = file_info.get('size', '0')
+            file_size = int(file_size)  # Convert to int to avoid type errors
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             
             title = item_metadata.get('title', 'Unknown Title')
@@ -281,6 +282,7 @@ Choose a format to download and upload to the channel:
             # Create caption
             caption = f"""
 📁 **{title}**
+👤 {creator}
 📅 {date}
 💾 {format_name} format
 📊 {self.format_file_size(file_size)}
@@ -386,6 +388,7 @@ Choose a format to download and upload to the channel:
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
         """Format file size in human readable format"""
+        size_bytes = int(size_bytes)  # Ensure it's int
         if size_bytes == 0:
             return "0 B"
         
