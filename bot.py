@@ -230,6 +230,10 @@ Choose a format to download and upload to the channel:
             # File metadata ရယူပါ
             file_name = file_info['name']
             file_size = file_info.get('size', 0)
+            try:
+                file_size = int(file_size)
+            except (ValueError, TypeError):
+                file_size = 0
             
             # Item metadata ကို caption နဲ့ embedding အတွက် ရယူပါ
             item_metadata = metadata.get('metadata', {})
@@ -241,7 +245,12 @@ Choose a format to download and upload to the channel:
             album_art = None
             files = metadata.get('files', [])
             for f in files:
-                if f.get('name', '').lower().endswith(('.jpg', '.jpeg', '.png')) and f.get('size', 0) > 1024:
+                try:
+                    f_size = int(f.get('size', 0))
+                except (ValueError, TypeError):
+                    f_size = 0
+
+                if f.get('name', '').lower().endswith(('.jpg', '.jpeg', '.png')) and f_size > 1024:
                     art_stream = await self.archive_handler.download_file_stream(f)
                     if art_stream:
                         album_art = art_stream.read()
