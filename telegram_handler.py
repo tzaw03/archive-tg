@@ -1,48 +1,36 @@
 #!/usr/bin/env python3
 """
-Telegram Channel Handler Module
-Handles all Telegram channel operations
+Telegram Handler Module
 """
 
-import asyncio
 import logging
-from typing import Optional, IO
 from io import BytesIO
+from pyrogram import Client
+from pyrogram.types import Message
 import mutagen
-from mutagen.flac import FLAC
+from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3, APIC
-from telethon import TelegramClient
-from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError
 
 logger = logging.getLogger(__name__)
 
-class TelegramChannelHandler:
-    def __init__(self, client: TelegramClient, channel_id: str):
-        self.client = client
-        self.channel_id = channel_id
+class TelegramHandler:
+    def __init__(self):
+        self.client = Client(
+            "bot",
+            api_id=int(os.getenv("API_ID")),
+            api_hash=os.getenv("API_HASH"),
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN")
+        )
     
-    async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: dict = None) -> bool:
-        """Upload file to Telegram channel with embedded metadata"""
+    async def start(self):
+        await self.client.start()
+        logger.info("Telegram client started")
+    
+    async def upload_file(self, chat_id: int, file_stream: BytesIO, file_name: str, metadata: dict):
         try:
-            # Determine file type and attributes
-            file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
-            attributes = []
+            file_ext = file_name.split('.')[-1].lower()
             
-            if file_ext in ['mp3', 'flac', 'wav', 'ogg']:
-                attributes.append(DocumentAttributeAudio(
-                    duration=0,  # Will be auto-detected
-                    title=file_name,
-                    performer="Archive.org"
-                ))
-            elif file_ext in ['mp4', 'mkv', 'avi']:
-                attributes.append(DocumentAttributeVideo(
-                    duration=0,  # Will be auto-detected
-                    w=0,  # Will be auto-detected
-                    h=0   # Will be auto-detected
-                ))
-            
-            # Embed metadata using Mutagen
+            # Embed metadata
             if file_ext in ['mp3', 'flac'] and metadata:
                 file_stream.seek(0)
                 temp_file = BytesIO(file_stream.read())
@@ -54,8 +42,11 @@ class TelegramChannelHandler:
                     audio["artist"] = metadata.get("creator", "Unknown Artist")
                     audio["album"] = metadata.get("album", "Archive.org Collection")
                     if "album_art" in metadata and metadata["album_art"]:
-                        audio["coverart"] = mutagen.flac.Picture()
-                        audio["coverart"].data = metadata["album_art"]
+                        pic = Picture()
+                        pic.data = metadata["album_art"]
+                        pic.type = 3
+                        pic.mime = "image/jpeg"
+                        audio.add_picture(pic)
                     audio.save(temp_file)
                 elif file_ext == 'mp3':
                     audio = ID3(temp_file)
@@ -75,35 +66,12 @@ class TelegramChannelHandler:
                 temp_file.seek(0)
                 file_stream = temp_file
             
-            # Upload file
-            logger.info(f"Uploading {file_name} to channel...")
             file_stream.seek(0)
-            
-            await self.client.send_file(
-                self.channel_id,
+            await self.client.send_document(
+                chat_id,
                 file_stream,
-                caption=caption,
-                file_name=file_name,
-                attributes=attributes,
-                allow_cache=False,
-                force_document=False,
-                supports_streaming=True
+                file_name=file_name
             )
-            
-            logger.info(f"Successfully uploaded: {file_name}")
-            return True
-            
-        except FloodWaitError as e:
-            logger.warning(f"Flood wait error: {e}")
-            await asyncio.sleep(e.seconds)
-            return await self.upload_file(file_stream, file_name, caption, metadata)
-            
-        except ChatWriteForbiddenError:
-            logger.error("Cannot write to channel. Check bot permissions.")
-            return False
-            
+            logger.info(f"Successfully uploaded {file_name} to Telegram")
         except Exception as e:
             logger.error(f"Error uploading file: {e}")
-            return False
-    
-    # [Keep the rest of the methods (send_message, send_progress_update) unchanged]
