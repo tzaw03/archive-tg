@@ -133,6 +133,14 @@ class TelegramChannelHandler:
             logger.error(f"Error sending progress update: {e}")
             return False
 
+    def stop(self):
+        """Manually stop the client"""
+        if self.client.is_connected:
+            asyncio.run_coroutine_threadsafe(self.client.stop(), asyncio.get_event_loop())
+
     def __del__(self):
-        """Cleanup client on object deletion"""
-        self.client.stop()
+        """Cleanup client on object deletion with safe handling"""
+        try:
+            self.stop()
+        except Exception as e:
+            logger.warning(f"Error during cleanup in __del__: {e}")
