@@ -1,415 +1,174 @@
 #!/usr/bin/env python3
 """
 Archive.org to Telegram Channel Bot
-Author: Your Name
-Version: 1.0.0
-Python 3.9+ compatible
+Version: 3.0.0 (Robust Edition)
 """
-
 import os
 import logging
 import asyncio
-from typing import Optional, Dict, Any
-from datetime import datetime
-import json
-import tempfile
-from io import BytesIO
+from typing import Dict, Any
+import io
 
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError
-
-from mutagen import File
-from mutagen.id3 import ID3, APIC
-from mutagen.flac import FLAC, Picture
-from mutagen.oggvorbis import OggVorbis
-from mutagen.wave import WAVE
-from mutagen.easyid3 import EasyID3
-from mutagen.easymp4 import EasyMP4  # For potential m4a, but not used here
-
 from archive_handler import ArchiveOrgHandler
 from telegram_handler import TelegramChannelHandler
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Environment variables
+# --- Environment Variables ---
 API_ID = int(os.environ.get('TELEGRAM_API_ID', '0'))
 API_HASH = os.environ.get('TELEGRAM_API_HASH', '')
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '')
-SESSION_NAME = os.environ.get('SESSION_NAME', 'archive_bot')
+SESSION_NAME = 'archive_bot_session'
 
 class ArchiveTelegramBot:
     def __init__(self):
         self.client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
         self.archive_handler = ArchiveOrgHandler()
-        self.channel_handler = TelegramChannelHandler(self.client, CHANNEL_ID)
-        self.user_sessions: Dict[int, Dict[str, Any]] = {}
-        
-    async def start(self):
-        """Start the bot"""
-        await self.client.start(bot_token=BOT_TOKEN)
-        logger.info("Bot started successfully")
-        
-        # Set up event handlers
-        self.client.add_event_handler(self.handle_download_command, events.NewMessage(pattern='/download'))
-        self.client.add_event_handler(self.handle_callback, events.CallbackQuery)
-        self.client.add_event_handler(self.handle_start, events.NewMessage(pattern='/start'))
-        self.client.add_event_handler(self.handle_help, events.NewMessage(pattern='/help'))
-        
-        # Run the bot
-        await self.client.run_until_disconnected()
-    
-    async def handle_start(self, event):
-        """Handle /start command"""
-        welcome_text = """
-🤖 **Archive.org to Telegram Bot**
-        
-I can download content from archive.org and upload it directly to your Telegram channel!
-
-**Commands:**
-• `/download [archive.org URL]` - Download and upload content
-• `/help` - Show this help message
-
-**Example:**
-`/download https://archive.org/details/your-item`
-        """
-        await event.respond(welcome_text, parse_mode='markdown')
-    
-    async def handle_help(self, event):
-        """Handle /help command"""
-        help_text = """
-📋 **Help Guide**
-
-**How to use:**
-1. Send me an archive.org URL with /download command
-2. I'll show you available formats (FLAC, MP3, WAV, etc.)
-3. Choose your preferred format
-4. I'll download and upload to the channel automatically
-
-**Supported formats:**
-• Audio: FLAC, MP3, WAV, OGG
-• Video: MP4, MKV, AVI
-• Images: JPG, PNG, GIF
-• Documents: PDF, EPUB, TXT
-
-**Features:**
-• Direct streaming upload (no local storage)
-• Progress tracking
-• Automatic cleanup
-• Support for large files (up to 2GB)
-• Embedded metadata and album art for audio files
-        """
-        await event.respond(help_text, parse_mode='markdown')
-    
-    async def handle_download_command(self, event):
-        """Handle /download command"""
-        user_id = event.sender_id
-        message_text = event.message.text
-        
-        # Extract URL from message
         try:
-            url = message_text.split(' ', 1)[1].strip()
+            self.channel_id_int = int(CHANNEL_ID)
+        except (ValueError, TypeError):
+            self.channel_id_int = CHANNEL_ID # Keep as string for username
+        self.channel_handler = TelegramChannelHandler(self.client, self.channel_id_int)
+        self.user_sessions: Dict[int, Dict[str, Any]] = {}
+
+    async def start(self):
+        """Starts the bot and sets up handlers."""
+        await self.client.start(bot_token=BOT_TOKEN)
+        logger.info("Bot has started successfully.")
+        self.client.add_event_handler(self.handle_start, events.NewMessage(pattern='/start|/help'))
+        self.client.add_event_handler(self.handle_download, events.NewMessage(pattern='/download'))
+        self.client.add_event_handler(self.handle_button_press, events.CallbackQuery)
+        await self.client.run_until_disconnected()
+
+    async def handle_start(self, event):
+        """Handler for /start and /help commands."""
+        await event.respond("Welcome! To begin, send me a command like:\n`/download https://archive.org/details/album-name`", parse_mode='markdown')
+
+    async def handle_download(self, event):
+        """Handles the /download command."""
+        user_id = event.sender_id
+        try:
+            url = event.message.text.split(' ', 1)[1].strip()
         except IndexError:
-            await event.respond("❌ Please provide an archive.org URL\nExample: `/download https://archive.org/details/item-name`", parse_mode='markdown')
+            await event.respond("Please provide a valid archive.org URL after the command.", parse_mode='markdown')
             return
         
-        # Show processing message
-        processing_msg = await event.respond("🔍 Fetching archive.org metadata...")
-        
-        try:
-            # Get metadata from archive.org
-            metadata = await self.archive_handler.get_metadata(url)
-            
-            if not metadata:
-                await processing_msg.edit("❌ Unable to fetch metadata. Please check the URL.")
-                return
-            
-            # Store session data
-            self.user_sessions[user_id] = {
-                'url': url,
-                'metadata': metadata,
-                'message_id': processing_msg.id
-            }
-            
-            # Get available formats
-            formats = self.archive_handler.get_available_formats(metadata)
-            
-            if not formats:
-                await processing_msg.edit("❌ No downloadable formats found.")
-                return
-            
-            # Create inline keyboard
-            buttons = []
-            for format_name, files in formats.items():
-                if files:  # Only show formats with files
-                    count = len(files)
-                    buttons.append([Button.inline(f"{format_name} ({count} files)", f"format_{format_name}")])
-            
-            if not buttons:
-                await processing_msg.edit("❌ No downloadable formats available.")
-                return
-            
-            # Add cancel button
-            buttons.append([Button.inline("❌ Cancel", "cancel")])
-            
-            # Update message with format selection
-            item_title = metadata.get('metadata', {}).get('title', 'Unknown Item')
-            response_text = f"""
-📁 **{item_title}**
+        status_msg = await event.respond("🔍 Fetching metadata from Archive.org...")
+        metadata = await self.archive_handler.get_metadata(url)
+        if not metadata:
+            await status_msg.edit("❌ Could not fetch metadata. Please check the URL and try again.")
+            return
 
-Available formats:
-Choose a format to download and upload to the channel:
-            """
-            
-            await processing_msg.edit(response_text, buttons=buttons, parse_mode='markdown')
-            
-        except Exception as e:
-            logger.error(f"Error processing download command: {e}")
-            await processing_msg.edit(f"❌ Error: {str(e)}")
-    
-    async def handle_callback(self, event):
-        """Handle inline keyboard callbacks"""
+        self.user_sessions[user_id] = {'metadata': metadata}
+        formats = self.archive_handler.get_available_formats(metadata)
+        if not formats:
+            await status_msg.edit("❌ No downloadable audio/media formats found on this page.")
+            return
+
+        buttons = [Button.inline(f"{name} ({len(files)} files)", f"format_{name}") for name, files in formats.items()]
+        keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        keyboard.append([Button.inline("✖️ Cancel", "cancel")])
+        
+        item_title = metadata.get('metadata', {}).get('title', 'Unknown Item')
+        await status_msg.edit(f"**{item_title}**\n\nPlease select a format to download:", buttons=keyboard, parse_mode='markdown')
+
+    async def handle_button_press(self, event):
+        """Handles all inline button presses."""
         user_id = event.sender_id
         data = event.data.decode('utf-8')
-        
-        # Check if user has an active session
-        if user_id not in self.user_sessions:
-            await event.answer("❌ Session expired. Please start over.", alert=True)
+        session = self.user_sessions.get(user_id)
+        if not session:
+            await event.answer("⚠️ This session has expired. Please start a new /download command.", alert=True)
             return
-        
-        session = self.user_sessions[user_id]
-        
+
         if data == 'cancel':
             del self.user_sessions[user_id]
-            await event.edit("❌ Operation cancelled.")
+            await event.edit("Operation cancelled.")
             return
-        
+
         if data.startswith('format_'):
-            format_name = data.replace('format_', '', 1)
-            
-            try:
-                # Get files for selected format
-                formats = self.archive_handler.get_available_formats(session['metadata'])
-                files = formats.get(format_name, [])
-                
-                if not files:
-                    await event.answer("❌ No files available in this format.", alert=True)
-                    return
-                
-                # Update message to show progress
-                await event.edit(f"📥 Downloading {format_name} format... Please wait.")
-                
-                # Download and upload files
-                for i, file_info in enumerate(files):
-                    file_name = file_info['name']
-                    await event.edit(f"📥 Processing {file_name} ({i+1}/{len(files)})...")
-                    
-                    # Download and upload file
-                    success = await self.download_and_upload_file(
-                        file_info, session['metadata'], format_name
-                    )
-                    
-                    if success:
-                        await event.edit(f"✅ Uploaded: {file_name}")
-                    else:
-                        await event.edit(f"❌ Failed to upload: {file_name}")
-                
-                # Clean up session
-                del self.user_sessions[user_id]
-                await event.edit("🎉 All files uploaded successfully!")
-                
-            except Exception as e:
-                logger.error(f"Error processing format selection: {e}")
-                await event.edit(f"❌ Error: {str(e)}")
-                del self.user_sessions[user_id]
-    
-    async def download_and_upload_file(self, file_info: Dict[str, Any], metadata: Dict[str, Any], format_name: str) -> bool:
-        """Download file from archive.org and upload to Telegram channel"""
+            format_name = data.replace('format_', '')
+            await event.edit(f"✅ Format '{format_name}' selected. The process will now begin in your channel.")
+            # Start the main processing task in the background
+            asyncio.create_task(self.process_album_download(event, user_id, format_name))
+
+    async def process_album_download(self, event, user_id: int, format_name: str):
+        """The main workflow: Download -> Embed Metadata -> Upload."""
+        session = self.user_sessions.get(user_id)
+        if not session: return
+
+        metadata = session['metadata']
+        formats = self.archive_handler.get_available_formats(metadata)
+        files_to_process = formats.get(format_name, [])
+
         try:
-            # Get item metadata for caption and tags
-            item_metadata = metadata.get('metadata', {})
-            identifier = item_metadata.get('identifier', '')
-            if not identifier:
-                logger.error("Missing item identifier")
-                return False
+            status_msg_to_user = await self.client.send_message(user_id, "🎨 Downloading album art...")
+            art_stream = await self.archive_handler.get_album_art_stream(metadata)
+
+            album_meta = metadata.get('metadata', {})
+            album_title = album_meta.get('title', 'Unknown Album')
+            album_year = album_meta.get('date', album_meta.get('year', ''))
             
-            # Download file stream
-            file_name = file_info.get('name', '')
-            file_stream = await self.archive_handler.download_file_stream(identifier, file_name)
-            
-            if not file_stream:
-                return False
-            
-            # Get file metadata
-            file_size = file_info.get('size', '0')
-            file_size = int(file_size)  # Convert to int to avoid type errors
-            file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
-            
-            title = item_metadata.get('title', 'Unknown Title')
-            creator = item_metadata.get('creator', 'Unknown Creator')
-            date = item_metadata.get('date', 'Unknown Date')
-            
-            # Get thumbnail if applicable
-            thumb_stream = None
-            thumb_mime = None
-            if format_name in ['FLAC', 'MP3', 'WAV', 'OGG', 'MP4', 'MKV', 'AVI']:
-                thumb_data = await self.archive_handler.get_item_thumbnail(identifier)
-                if thumb_data:
-                    thumb_stream, thumb_mime = thumb_data
-            
-            # Embed metadata and album art for audio files
-            is_audio = format_name in ['FLAC', 'MP3', 'WAV', 'OGG']
-            if is_audio and file_stream:
-                loop = asyncio.get_running_loop()
-                file_stream = await loop.run_in_executor(
-                    None,
-                    self._embed_audio_metadata,
-                    file_stream,
-                    title,
-                    creator,
-                    date,
-                    thumb_stream,
-                    thumb_mime,
-                    file_ext
+            # Send initial message to the channel
+            caption = f"**Album:** {album_title}\n**Year:** {album_year}\n**Format:** {format_name}"
+            if art_stream:
+                await self.client.send_file(self.channel_id_int, file=art_stream, caption=caption, parse_mode='markdown')
+                art_stream.seek(0) # Reset stream for reuse
+            else:
+                await self.client.send_message(self.channel_id_int, caption, parse_mode='markdown')
+
+            total_files = len(files_to_process)
+            for i, file_info in enumerate(files_to_process, 1):
+                file_name = file_info['name']
+                identifier = file_info['identifier']
+                
+                # 1. Download
+                await status_msg_to_user.edit(f"Downloading track {i}/{total_files}:\n`{file_name}`")
+                original_audio_stream = await self.archive_handler.download_file_stream(identifier, file_name)
+                if not original_audio_stream:
+                    await self.client.send_message(user_id, f"⚠️ Failed to download `{file_name}`. Skipping.")
+                    continue
+
+                # 2. Embed Metadata
+                await status_msg_to_user.edit(f"Embedding metadata for track {i}/{total_files}...")
+                track_meta = {
+                    'title': os.path.splitext(file_name)[0].replace('_', ' ').strip(),
+                    'artist': album_meta.get('creator', 'Unknown Artist'),
+                    'album': album_title,
+                    'date': album_year
+                }
+                processed_audio_stream = self.channel_handler.embed_metadata(
+                    original_audio_stream, file_name, track_meta, art_stream
                 )
-            
-            # Create caption
-            caption = f"""
-📁 **{title}**
-👤 {creator}
-📅 {date}
-💾 {format_name} format
-📊 {self.format_file_size(file_size)}
-            """.strip()
-            
-            # Upload to channel
-            success = await self.channel_handler.upload_file(
-                file_stream, file_name, caption, thumb_stream
-            )
-            
-            return success
-            
+                
+                # 3. Upload
+                await status_msg_to_user.edit(f"Uploading track {i}/{total_files}:\n`{file_name}`")
+                track_caption = f"**Track:** {track_meta['title']}"
+                await self.channel_handler.upload_file(
+                    processed_audio_stream, file_name, track_caption, track_meta
+                )
+
+            await status_msg_to_user.edit(f"✅ **Process Complete!**\n\nAll {total_files} tracks from '{album_title}' have been uploaded.")
         except Exception as e:
-            logger.error(f"Error downloading/uploading file: {e}")
-            return False
-    
-    def _embed_audio_metadata(self, file_stream: BytesIO, title: str, creator: str, date: str,
-                             thumb_stream: Optional[BytesIO], thumb_mime: Optional[str], file_ext: str) -> BytesIO:
-        """Embed metadata and album art into audio file using temp file (sync function)"""
-        # Write to temp file
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            file_stream.seek(0)
-            temp_file.write(file_stream.read())
-            temp_path = temp_file.name
-        
-        try:
-            audio = File(temp_path, easy=True)
-            if not audio:
-                raise ValueError("Unsupported audio format")
-            
-            # Set common tags
-            audio['title'] = title
-            audio['artist'] = creator
-            audio['album'] = title
-            if date:
-                audio['date'] = date
-            
-            # Add album art if available
-            if thumb_stream and thumb_mime:
-                thumb_stream.seek(0)
-                pic_data = thumb_stream.read()
-                
-                if file_ext == 'mp3':
-                    if not isinstance(audio.tags, ID3):
-                        audio.tags = ID3()
-                    audio.tags.add(APIC(
-                        encoding=3,
-                        mime=thumb_mime,
-                        type=3,  # Cover front
-                        desc='Cover',
-                        data=pic_data
-                    ))
-                
-                elif file_ext == 'flac':
-                    audio = FLAC(temp_path)
-                    pic = Picture()
-                    pic.data = pic_data
-                    pic.type = 3
-                    pic.mime = thumb_mime
-                    pic.width = 0  # Auto
-                    pic.height = 0
-                    pic.depth = 24
-                    audio.add_picture(pic)
-                
-                elif file_ext == 'ogg':
-                    audio = OggVorbis(temp_path)
-                    import base64
-                    pic = Picture()
-                    pic.data = pic_data
-                    pic.type = 3
-                    pic.mime = thumb_mime
-                    pic.width = 0
-                    pic.height = 0
-                    pic.depth = 24
-                    encoded_pic = base64.b64encode(pic.write())
-                    audio['metadata_block_picture'] = [encoded_pic.decode('ascii')]
-                
-                elif file_ext == 'wav':
-                    # WAV supports limited tags, no album art typically
-                    audio = WAVE(temp_path)
-                    if not audio.tags:
-                        audio.add_tags()
-                    # ID3 in WAV is possible but uncommon; skip art for WAV
-                    pass
-            
-            # Save changes
-            audio.save()
-            
-            # Read back to BytesIO
-            with open(temp_path, 'rb') as f:
-                new_stream = BytesIO(f.read())
-            return new_stream
-        
-        except Exception as e:
-            logger.error(f"Error embedding metadata: {e}")
-            # Return original stream on error
-            file_stream.seek(0)
-            return file_stream
-        
+            logger.error(f"A critical error occurred during album processing: {e}", exc_info=True)
+            await self.client.send_message(user_id, f"❌ A critical error occurred: {e}")
         finally:
-            os.unlink(temp_path)
-    
-    @staticmethod
-    def format_file_size(size_bytes: int) -> str:
-        """Format file size in human readable format"""
-        size_bytes = int(size_bytes)  # Ensure it's int
-        if size_bytes == 0:
-            return "0 B"
-        
-        size_names = ["B", "KB", "MB", "GB"]
-        i = 0
-        while size_bytes >= 1024 and i < len(size_names) - 1:
-            size_bytes /= 1024.0
-            i += 1
-        
-        return f"{size_bytes:.1f} {size_names[i]}"
+            if user_id in self.user_sessions:
+                del self.user_sessions[user_id] # Clean up session
 
 async def main():
-    """Main function"""
     bot = ArchiveTelegramBot()
-    
     try:
         await bot.start()
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Bot crashed: {e}")
+        logger.error(f"Bot crashed with an unhandled exception: {e}", exc_info=True)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    # Ensure all required variables are present
+    if not all([API_ID, API_HASH, BOT_TOKEN, CHANNEL_ID]):
+        logger.critical("FATAL: Missing one or more environment variables. Please check your setup.")
+    else:
+        asyncio.run(main())
