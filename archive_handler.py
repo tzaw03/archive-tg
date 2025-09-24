@@ -109,7 +109,6 @@ class ArchiveOrgHandler:
         for file_info in files:
             file_name = file_info.get('name', '')
             if not file_name:
-                logger.warning(f"File info missing name: {file_info}")
                 continue
             
             # Skip metadata files
@@ -136,7 +135,7 @@ class ArchiveOrgHandler:
                         formats[format_name] = []
                     # Ensure identifier is present, use metadata identifier as fallback
                     file_info_with_id = file_info.copy()
-                    if 'identifier' not in file_info_with_id:
+                    if 'identifier' not in file_info_with_id or not file_info_with_id['identifier']:
                         file_info_with_id['identifier'] = metadata.get('metadata', {}).get('identifier', '')
                     formats[format_name].append(file_info_with_id)
                     break
