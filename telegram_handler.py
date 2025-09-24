@@ -12,24 +12,37 @@ import mutagen
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3, APIC, TIT2, TPE1, TALB
 from telethon import TelegramClient
-from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError
+from telethon.tl.types import InputPeerChannel, DocumentAttributeAudio, DocumentAttributeVideo
+from telethon.errors import FloodWaitError, ChatWriteForbiddenError, ValueError
 
 logger = logging.getLogger(__name__)
 
 class TelegramChannelHandler:
     def __init__(self, client: TelegramClient, channel_id: str):
         self.client = client
-        self.channel_id = channel_id  # Store as string, will resolve entity when needed
+        self.channel_id = channel_id  # Store as string (e.g., "-1003031099376")
     
     async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: dict = None) -> bool:
         """Upload file to Telegram channel with embedded metadata"""
         try:
-            # Resolve channel entity
+            # Resolve channel entity with proper handling for private channel ID
             try:
+                # Ensure channel_id starts with "-100" for private channels
+                if not self.channel_id.startswith('-100'):
+                    logger.error(f"Invalid channel ID format: {self.channel_id}. Expected format: '-100xxxxxxx'.")
+                    return False
+                
+                # Convert string ID to InputPeerChannel
                 entity = await self.client.get_entity(self.channel_id)
+                if not hasattr(entity, 'channel_id'):
+                    logger.error(f"Failed to resolve channel entity for ID: {self.channel_id}. Ensure bot is invited and has permissions.")
+                    return False
+                logger.info(f"Successfully resolved channel entity for ID: {self.channel_id}")
+            except ValueError as e:
+                logger.error(f"Invalid channel ID format: {e}. Please ensure CHANNEL_ID is correct (e.g., '-1003031099376').")
+                return False
             except Exception as e:
-                logger.error(f"Failed to get channel entity: {e}. Check CHANNEL_ID and bot permissions.")
+                logger.error(f"Failed to get channel entity: {e}. Check CHANNEL_ID ('{self.channel_id}') and ensure bot is added as admin with 'Post messages' rights.")
                 return False
             
             # Determine file type and attributes
@@ -127,7 +140,7 @@ class TelegramChannelHandler:
             file_stream.seek(0)
             
             await self.client.send_file(
-                entity,  # Use resolved entity instead of raw channel_id
+                entity,  # Use resolved entity
                 file_stream,
                 caption=caption,
                 file_name=file_name,
