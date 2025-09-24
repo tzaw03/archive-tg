@@ -141,10 +141,3 @@ class TelegramChannelHandler:
                 asyncio.run_coroutine_threadsafe(self.client.stop(), loop)
             else:
                 asyncio.run(self.client.stop())
-
-    def __del__(self):
-        """Cleanup client on object deletion with safe handling"""
-        try:
-            self.stop()
-        except Exception as e:
-            logger.warning(f"Error during cleanup in __del__: {e}")
