@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 Telegram Channel Handler Module
-Handles metadata embedding and Telegram uploads.
+Handles metadata embedding on disk and Telegram uploads.
 """
 import asyncio
 import logging
 from typing import Optional, Dict, Any
-from io import BytesIO
 
 from telethon import TelegramClient
 from telethon.tl.types import DocumentAttributeAudio
@@ -23,21 +22,12 @@ class TelegramChannelHandler:
         self.client = client
         self.channel_id = channel_id
 
-    def embed_metadata(self, file_stream: BytesIO, file_name: str, track_meta: Dict[str, Any], art_stream: Optional[BytesIO]) -> BytesIO:
-        """
-        Embeds metadata and album art into an audio file stream.
-        This is the core function to solve the main problem.
-        """
-        output_stream = BytesIO()
+    def embed_metadata(self, file_path: str, track_meta: Dict[str, Any], art_path: Optional[str]) -> bool:
+        """Embeds metadata and album art into a file on disk."""
         try:
-            file_stream.seek(0)
-            
-            # CRITICAL FIX: Use 'fileobj' keyword argument for mutagen
-            audio = mutagen.File(fileobj=file_stream, easy=True)
-            if audio is None:
-                raise ValueError("Mutagen could not recognize the audio format from stream.")
+            audio = mutagen.File(file_path, easy=True)
+            if audio is None: raise ValueError("Mutagen could not recognize the audio format from file.")
 
-            # Clear existing tags and apply new ones
             audio.delete()
             if track_meta.get('title'): audio['title'] = track_meta['title']
             if track_meta.get('artist'): audio['artist'] = track_meta['artist']
@@ -45,56 +35,55 @@ class TelegramChannelHandler:
             if track_meta.get('date'): audio['date'] = track_meta['date']
             audio.save()
 
-            file_stream.seek(0)
-            # Re-open with full object to add picture
-            audio_full = mutagen.File(fileobj=file_stream)
-            if art_stream and audio_full is not None:
-                art_stream.seek(0)
-                art_data = art_stream.read()
+            audio_full = mutagen.File(file_path)
+            if art_path and audio_full is not None:
+                with open(art_path, 'rb') as art_f:
+                    art_data = art_f.read()
                 
-                if file_name.lower().endswith('.flac'):
+                file_name_lower = file_path.lower()
+                if file_name_lower.endswith('.flac'):
                     pic = FLACPicture()
-                    pic.type = 3  # Cover (front)
+                    pic.type = 3
                     pic.mime = 'image/jpeg'
                     pic.data = art_data
                     audio_full.add_picture(pic)
-                elif file_name.lower().endswith('.mp3'):
+                elif file_name_lower.endswith('.mp3'):
                     audio_full.tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=art_data))
-            
-            audio_full.save(output_stream)
-            output_stream.seek(0)
-            logger.info(f"Successfully embedded metadata for {file_name}")
-            return output_stream
+                
+                audio_full.save()
+
+            logger.info(f"Successfully embedded metadata for {os.path.basename(file_path)}")
+            return True
             
         except Exception as e:
-            logger.error(f"METADATA EMBEDDING FAILED for {file_name}: {e}. Sending original file.")
-            file_stream.seek(0)
-            return file_stream
+            logger.error(f"METADATA EMBEDDING FAILED for {os.path.basename(file_path)}: {e}")
+            return False
 
-    async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, track_meta: Dict[str, Any]) -> bool:
-        """Uploads the processed file to Telegram."""
+    async def upload_file(self, file_path: str, caption: str, track_meta: Dict[str, Any]) -> bool:
+        """Uploads a file from disk to Telegram."""
+        file_name = os.path.basename(file_path)
         try:
             attributes = []
             if file_name.lower().endswith(('.mp3', '.flac', '.wav', '.ogg')):
                 attributes.append(DocumentAttributeAudio(
-                    duration=0, # Telegram will auto-detect
+                    duration=0,
                     title=track_meta.get('title', file_name),
                     performer=track_meta.get('artist', "Unknown Artist")
                 ))
 
             await self.client.send_file(
                 self.channel_id,
-                file=file_stream,
+                file=file_path,
                 caption=caption,
                 attributes=attributes,
-                force_document=False, # Let Telegram decide best display (audio or file)
+                force_document=False,
                 supports_streaming=True
             )
             return True
         except FloodWaitError as e:
             logger.warning(f"Flood wait of {e.seconds} seconds required. Sleeping...")
             await asyncio.sleep(e.seconds)
-            return await self.upload_file(file_stream, file_name, caption, track_meta) # Retry
+            return await self.upload_file(file_path, caption, track_meta)
         except Exception as e:
             logger.error(f"Failed to upload {file_name}: {e}")
             return False
