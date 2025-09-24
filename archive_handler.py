@@ -166,7 +166,7 @@ class ArchiveOrgHandler:
                 # Ensure content-length is an integer
                 content_length = response.headers.get('content-length', '0')
                 try:
-                    total_size = int(content_length)
+                    total_size = int(float(str(content_length).strip()))  # Convert to float first to handle decimals, then to int
                 except (ValueError, TypeError):
                     logger.warning(f"Invalid content-length: {content_length}, defaulting to 0")
                     total_size = 0
