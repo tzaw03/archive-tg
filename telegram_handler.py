@@ -20,11 +20,18 @@ logger = logging.getLogger(__name__)
 class TelegramChannelHandler:
     def __init__(self, client: TelegramClient, channel_id: str):
         self.client = client
-        self.channel_id = channel_id
-      
+        self.channel_id = channel_id  # Store as string, will resolve entity when needed
+    
     async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: dict = None) -> bool:
         """Upload file to Telegram channel with embedded metadata"""
         try:
+            # Resolve channel entity
+            try:
+                entity = await self.client.get_entity(self.channel_id)
+            except Exception as e:
+                logger.error(f"Failed to get channel entity: {e}. Check CHANNEL_ID and bot permissions.")
+                return False
+            
             # Determine file type and attributes
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
             attributes = []
@@ -51,27 +58,29 @@ class TelegramChannelHandler:
                 if file_ext == 'flac':
                     try:
                         audio = FLAC(temp_file)
-                        if metadata.get("title"):
-                            audio["title"] = metadata["title"]
-                        if metadata.get("creator"):
-                            audio["artist"] = metadata["creator"]
-                        if metadata.get("album"):
-                            audio["album"] = metadata["album"]
-                        
-                        if "album_art" in metadata and metadata["album_art"]:
-                            pic = Picture()
-                            pic.data = metadata["album_art"]
-                            pic.type = 3  # Cover (front)
-                            if metadata["album_art"][:4] == b'\x89PNG':
-                                pic.mime = 'image/png'
-                            else:
-                                pic.mime = 'image/jpeg'
-                            audio.add_picture(pic)
-                        
-                        audio.save(temp_file)
-                        logger.info("FLAC metadata embedded successfully")
+                        if audio:
+                            if metadata.get("title"):
+                                audio["title"] = metadata["title"]
+                            if metadata.get("creator"):
+                                audio["artist"] = metadata["creator"]
+                            if metadata.get("album"):
+                                audio["album"] = metadata["album"]
+                            
+                            if "album_art" in metadata and metadata["album_art"]:
+                                pic = Picture()
+                                pic.data = metadata["album_art"]
+                                pic.type = 3  # Cover (front)
+                                if metadata["album_art"][:4] == b'\x89PNG':
+                                    pic.mime = 'image/png'
+                                else:
+                                    pic.mime = 'image/jpeg'
+                                audio.add_picture(pic)
+                            
+                            audio.save(temp_file)
+                            logger.info("FLAC metadata embedded successfully")
                     except Exception as e:
-                        logger.warning(f"Mutagen error for FLAC {file_name}: {e}. Sending original file.")
+                        logger.warning(f"Mutagen error for FLAC {file_name}: {e}. Sending original file without metadata.")
+                        temp_file.seek(0)  # Reset to original position
                 
                 elif file_ext == 'mp3':
                     try:
@@ -79,7 +88,7 @@ class TelegramChannelHandler:
                     except mutagen.id3.ID3NoHeaderError:
                         id3 = ID3()
                     except Exception as e:
-                        logger.warning(f"Mutagen error for MP3 {file_name}: {e}. Sending original file.")
+                        logger.warning(f"Mutagen error for MP3 {file_name}: {e}. Sending original file without metadata.")
                         id3 = None
                     
                     if id3 is not None:
@@ -107,7 +116,8 @@ class TelegramChannelHandler:
                             id3.save(temp_file)
                             logger.info("MP3 metadata embedded successfully")
                         except Exception as e:
-                            logger.warning(f"Could not save MP3 ID3 tags for {file_name}: {e}. Sending original file.")
+                            logger.warning(f"Could not save MP3 ID3 tags for {file_name}: {e}. Sending original file without metadata.")
+                            temp_file.seek(0)  # Reset to original position
                 
                 temp_file.seek(0)
                 file_stream = temp_file
@@ -117,7 +127,7 @@ class TelegramChannelHandler:
             file_stream.seek(0)
             
             await self.client.send_file(
-                self.channel_id,
+                entity,  # Use resolved entity instead of raw channel_id
                 file_stream,
                 caption=caption,
                 file_name=file_name,
@@ -146,7 +156,8 @@ class TelegramChannelHandler:
     async def send_message(self, message: str) -> bool:
         """Send text message to channel"""
         try:
-            await self.client.send_message(self.channel_id, message)
+            entity = await self.client.get_entity(self.channel_id)
+            await self.client.send_message(entity, message)
             return True
         except Exception as e:
             logger.error(f"Error sending message: {e}")
@@ -155,10 +166,11 @@ class TelegramChannelHandler:
     async def send_progress_update(self, message: str) -> bool:
         """Send progress update to channel"""
         try:
+            entity = await self.client.get_entity(self.channel_id)
             # Add timestamp to message
             timestamp = asyncio.get_event_loop().time()
             progress_message = f"⏰ {timestamp:.0f}: {message}"
-            await self.send_message(progress_message)
+            await self.client.send_message(entity, progress_message)
             return True
         except Exception as e:
             logger.error(f"Error sending progress update: {e}")
