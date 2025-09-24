@@ -21,7 +21,7 @@ class TelegramChannelHandler:
     def __init__(self, client: TelegramClient, channel_id: str):
         self.client = client
         self.channel_id = channel_id
-    
+      
     async def upload_file(self, file_stream: BytesIO, file_name: str, caption: str, metadata: dict = None) -> bool:
         """Upload file to Telegram channel with embedded metadata"""
         try:
@@ -51,53 +51,45 @@ class TelegramChannelHandler:
                 if file_ext == 'flac':
                     try:
                         audio = FLAC(temp_file)
-                    except Exception:
-                        # If mutagen can't parse, just skip tagging
-                        audio = None
-
-                    if audio is not None:
-                        # set standard tags
                         if metadata.get("title"):
-                            audio["title"] = metadata.get("title")
+                            audio["title"] = metadata["title"]
                         if metadata.get("creator"):
-                            audio["artist"] = metadata.get("creator")
+                            audio["artist"] = metadata["creator"]
                         if metadata.get("album"):
-                            audio["album"] = metadata.get("album")
+                            audio["album"] = metadata["album"]
                         
-                        # add picture if present
                         if "album_art" in metadata and metadata["album_art"]:
                             pic = Picture()
                             pic.data = metadata["album_art"]
-                            pic.type = 3
-                            # detect mime type (jpeg or png)
+                            pic.type = 3  # Cover (front)
                             if metadata["album_art"][:4] == b'\x89PNG':
                                 pic.mime = 'image/png'
                             else:
                                 pic.mime = 'image/jpeg'
                             audio.add_picture(pic)
-                        # save tags back into temp_file
-                        try:
-                            audio.save(temp_file)
-                        except Exception as e:
-                            logger.warning(f"Could not save FLAC tags: {e}")
-
+                        
+                        audio.save(temp_file)
+                        logger.info("FLAC metadata embedded successfully")
+                    except Exception as e:
+                        logger.warning(f"Mutagen error for FLAC {file_name}: {e}. Sending original file.")
+                
                 elif file_ext == 'mp3':
                     try:
-                        # Try to load existing ID3 tags; if not present, create new ID3
-                        try:
-                            id3 = ID3(temp_file)
-                        except Exception:
-                            id3 = ID3()
-                        
-                        # set basic text tags
+                        id3 = ID3(temp_file)
+                    except mutagen.id3.ID3NoHeaderError:
+                        id3 = ID3()
+                    except Exception as e:
+                        logger.warning(f"Mutagen error for MP3 {file_name}: {e}. Sending original file.")
+                        id3 = None
+                    
+                    if id3 is not None:
                         if metadata.get("title"):
-                            id3.add(TIT2(encoding=3, text=metadata.get("title")))
+                            id3.add(TIT2(encoding=3, text=metadata["title"]))
                         if metadata.get("creator"):
-                            id3.add(TPE1(encoding=3, text=metadata.get("creator")))
+                            id3.add(TPE1(encoding=3, text=metadata["creator"]))
                         if metadata.get("album"):
-                            id3.add(TALB(encoding=3, text=metadata.get("album")))
+                            id3.add(TALB(encoding=3, text=metadata["album"]))
                         
-                        # add album art if present
                         if "album_art" in metadata and metadata["album_art"]:
                             mime = 'image/jpeg'
                             if metadata["album_art"][:4] == b'\x89PNG':
@@ -109,17 +101,14 @@ class TelegramChannelHandler:
                                 desc='Cover',
                                 data=metadata["album_art"]
                             ))
-                        # save ID3 tags into the temp_file
+                        
                         try:
-                            # When saving to a file-like object, ID3.save requires a filename or a fileobj supporting .seek and .write
                             temp_file.seek(0)
                             id3.save(temp_file)
+                            logger.info("MP3 metadata embedded successfully")
                         except Exception as e:
-                            logger.warning(f"Could not save MP3 ID3 tags: {e}")
-                    except Exception as e:
-                        logger.warning(f"MP3 tagging skipped due to error: {e}")
+                            logger.warning(f"Could not save MP3 ID3 tags for {file_name}: {e}. Sending original file.")
                 
-                # rewind after tagging
                 temp_file.seek(0)
                 file_stream = temp_file
             
@@ -154,4 +143,23 @@ class TelegramChannelHandler:
             logger.error(f"Error uploading file: {e}")
             return False
     
-    # [Keep the rest of the methods (send_message, send_progress_update) unchanged]
+    async def send_message(self, message: str) -> bool:
+        """Send text message to channel"""
+        try:
+            await self.client.send_message(self.channel_id, message)
+            return True
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+            return False
+    
+    async def send_progress_update(self, message: str) -> bool:
+        """Send progress update to channel"""
+        try:
+            # Add timestamp to message
+            timestamp = asyncio.get_event_loop().time()
+            progress_message = f"⏰ {timestamp:.0f}: {message}"
+            await self.send_message(progress_message)
+            return True
+        except Exception as e:
+            logger.error(f"Error sending progress update: {e}")
+            return False
