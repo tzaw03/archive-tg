@@ -42,21 +42,21 @@ class ArchiveTelegramBot:
         self.user_sessions: Dict[int, Dict[str, Any]] = {}
         
     async def start(self):
-        """Bot ကို စတင်ပါ"""
+        """Start the bot"""
         await self.client.start(bot_token=BOT_TOKEN)
-        logger.info("Bot အောင်မြင်စွာ စတင်ပါသည်")
+        logger.info("Bot started successfully")
         
-        # Event handlers တွေ ပြင်ဆင်ပါ
+        # Set up event handlers
         self.client.add_event_handler(self.handle_download_command, events.NewMessage(pattern='/download'))
         self.client.add_event_handler(self.handle_callback, events.CallbackQuery)
         self.client.add_event_handler(self.handle_start, events.NewMessage(pattern='/start'))
         self.client.add_event_handler(self.handle_help, events.NewMessage(pattern='/help'))
         
-        # Bot ကို အလုပ်လုပ်ပါ
+        # Run the bot
         await self.client.run_until_disconnected()
     
     async def handle_start(self, event):
-        """'/start' command ကို ကိုင်တွယ်ပါ"""
+        """Handle /start command"""
         welcome_text = """
 🤖 **Archive.org to Telegram Bot**
         
@@ -72,7 +72,7 @@ I can download content from archive.org and upload it directly to your Telegram 
         await event.respond(welcome_text, parse_mode='markdown')
     
     async def handle_help(self, event):
-        """'/help' command ကို ကိုင်တွယ်ပါ"""
+        """Handle /help command"""
         help_text = """
 📋 **Help Guide**
 
@@ -97,43 +97,43 @@ I can download content from archive.org and upload it directly to your Telegram 
         await event.respond(help_text, parse_mode='markdown')
     
     async def handle_download_command(self, event):
-        """'/download' command ကို ကိုင်တွယ်ပါ"""
+        """Handle /download command"""
         user_id = event.sender_id
         message_text = event.message.text
         
-        # URL ကို message ထဲကနေ ထုတ်ပါ
+        # Extract URL from message
         try:
             url = message_text.split(' ', 1)[1].strip()
         except IndexError:
             await event.respond("❌ Please provide an archive.org URL\nExample: `/download https://archive.org/details/item-name`", parse_mode='markdown')
             return
         
-        # Processing message ပြပါ
+        # Show processing message
         processing_msg = await event.respond("🔍 Fetching archive.org metadata...")
         
         try:
-            # archive.org ကနေ metadata ရယူပါ
+            # Get metadata from archive.org
             metadata = await self.archive_handler.get_metadata(url)
             
             if not metadata:
                 await processing_msg.edit("❌ Unable to fetch metadata. Please check the URL.")
                 return
             
-            # Session data ကို သိမ်းပါ
+            # Store session data
             self.user_sessions[user_id] = {
                 'url': url,
                 'metadata': metadata,
                 'message_id': processing_msg.id
             }
             
-            # Available formats ရယူပါ
+            # Get available formats
             formats = self.archive_handler.get_available_formats(metadata)
             
             if not formats:
                 await processing_msg.edit("❌ No downloadable formats found.")
                 return
             
-            # Inline keyboard ဖန်တီးပါ
+            # Create inline keyboard
             buttons = []
             for format_name, files in formats.items():
                 if files:  # Only show formats with files
@@ -144,10 +144,10 @@ I can download content from archive.org and upload it directly to your Telegram 
                 await processing_msg.edit("❌ No downloadable formats available.")
                 return
             
-            # Cancel button ထည့်ပါ
+            # Add cancel button
             buttons.append([Button.inline("❌ Cancel", "cancel")])
             
-            # Message ကို format selection နဲ့ ပြန်ပြပါ
+            # Update message with format selection
             item_title = metadata.get('metadata', {}).get('title', 'Unknown Item')
             response_text = f"""
 📁 **{item_title}**
@@ -163,11 +163,11 @@ Choose a format to download and upload to the channel:
             await processing_msg.edit(f"❌ Error: {str(e)}")
     
     async def handle_callback(self, event):
-        """Inline keyboard callbacks ကို ကိုင်တွယ်ပါ"""
+        """Handle inline keyboard callbacks"""
         user_id = event.sender_id
         data = event.data.decode('utf-8')
         
-        # User မှာ active session ရှိမရှိ စစ်ဆေးပါ
+        # Check if user has an active session
         if user_id not in self.user_sessions:
             await event.answer("❌ Session expired. Please start over.", alert=True)
             return
@@ -183,7 +183,7 @@ Choose a format to download and upload to the channel:
             format_name = data.replace('format_', '', 1)
             
             try:
-                # Selected format အတွက် files ရယူပါ
+                # Get files for selected format
                 formats = self.archive_handler.get_available_formats(session['metadata'])
                 files = formats.get(format_name, [])
                 
@@ -191,17 +191,21 @@ Choose a format to download and upload to the channel:
                     await event.answer("❌ No files available in this format.", alert=True)
                     return
                 
-                # Message ကို progress နဲ့ ပြန်ပြပါ
+                # Update message to show progress
                 await event.edit(f"📥 Downloading {format_name} format... Please wait.")
                 
-                # Files တွေ download နဲ့ upload လုပ်ပါ
+                # Download and upload files
                 for i, file_info in enumerate(files):
                     file_name = file_info['name']
                     await event.edit(f"📥 Processing {file_name} ({i+1}/{len(files)})...")
                     
-                    # File ကို download နဲ့ upload လုပ်ပါ
+                    # Ensure identifier is present for file_info
+                    file_info_with_id = file_info.copy()
+                    if 'identifier' not in file_info_with_id or not file_info_with_id.get('identifier'):
+                        file_info_with_id['identifier'] = session['metadata'].get('metadata', {}).get('identifier', '')
+                    
                     success = await self.download_and_upload_file(
-                        file_info, session['metadata'], format_name
+                        file_info_with_id, session['metadata'], format_name
                     )
                     
                     if success:
@@ -209,7 +213,7 @@ Choose a format to download and upload to the channel:
                     else:
                         await event.edit(f"❌ Failed to upload: {file_name}")
                 
-                # Session ကို ရှင်းပါ
+                # Clean up session
                 del self.user_sessions[user_id]
                 await event.edit("🎉 All files uploaded successfully!")
                 
@@ -219,54 +223,49 @@ Choose a format to download and upload to the channel:
                 del self.user_sessions[user_id]
     
     async def download_and_upload_file(self, file_info: Dict[str, Any], metadata: Dict[str, Any], format_name: str) -> bool:
-        """File ကို archive.org ကနေ download ပြီး Telegram channel ကို upload လုပ်ပါ"""
+        """Download file from archive.org and upload to Telegram channel"""
         try:
-            # File stream ကို download ပါ
-            # Ensure file_info has identifier (some metadata file entries don't include it)
-            file_info_with_id = file_info.copy()
-            if 'identifier' not in file_info_with_id or not file_info_with_id.get('identifier'):
-                file_info_with_id['identifier'] = metadata.get('metadata', {}).get('identifier', '')
-            
-            file_stream = await self.archive_handler.download_file_stream(file_info_with_id)
+            # Download file stream
+            file_stream = await self.archive_handler.download_file_stream(file_info)
             
             if not file_stream:
                 return False
             
-            # File metadata ရယူပါ
+            # Get file metadata
             file_name = file_info.get('name')
-            file_size_raw = file_info.get('size', 0)
+            raw_size = file_info.get('size', 0)
             try:
-                file_size = int(file_size_raw)
+                file_size = int(raw_size)
             except (ValueError, TypeError):
                 file_size = 0
             
-            # Item metadata ကို caption နဲ့ embedding အတွက် ရယူပါ
+            # Get item metadata for caption and embedding
             item_metadata = metadata.get('metadata', {})
             title = item_metadata.get('title', 'Unknown Title')
             creator = item_metadata.get('creator', 'Unknown Creator')
             date = item_metadata.get('date', 'Unknown Date')
             
-            # Album art ကို metadata ကနေ ရှာပါ (ရှိရင်)
+            # Attempt to get album art from metadata (if available)
             album_art = None
             files = metadata.get('files', [])
             for f in files:
-                # for these raw metadata file dicts, ensure identifier exists before download
+                raw_f_size = f.get('size', 0)
                 try:
-                    f_size = int(f.get('size', 0))
+                    f_size = int(raw_f_size)
                 except (ValueError, TypeError):
                     f_size = 0
-
+                
                 if f.get('name', '').lower().endswith(('.jpg', '.jpeg', '.png')) and f_size > 1024:
                     f_with_id = f.copy()
                     if 'identifier' not in f_with_id or not f_with_id.get('identifier'):
-                        f_with_id['identifier'] = metadata.get('metadata', {}).get('identifier', '')
+                        f_with_id['identifier'] = item_metadata.get('identifier', '')
                     art_stream = await self.archive_handler.download_file_stream(f_with_id)
                     if art_stream:
                         art_stream.seek(0)
                         album_art = art_stream.getvalue()
                         break
             
-            # Embedding အတွက် metadata ပြင်ဆင်ပါ
+            # Prepare metadata for embedding
             embed_metadata = {
                 "title": title,
                 "creator": creator,
@@ -274,15 +273,16 @@ Choose a format to download and upload to the channel:
                 "album_art": album_art
             }
             
-            # Caption ဖန်တီးပါ
+            # Create caption
             caption = f"""
 📁 **{title}**
+👤 {creator}
 📅 {date}
 💾 {format_name} format
 📊 {self.format_file_size(file_size)}
             """.strip()
             
-            # Channel ကို upload လုပ်ပါ (embedded metadata နဲ့)
+            # Upload to channel with embedded metadata
             success = await self.channel_handler.upload_file(
                 file_stream, file_name, caption, metadata=embed_metadata
             )
@@ -295,7 +295,12 @@ Choose a format to download and upload to the channel:
     
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """File size ကို လူဖတ်လို့လွယ်တဲ့ format ပြင်ဆင်ပါ"""
+        """Format file size in human readable format"""
+        try:
+            size_bytes = int(size_bytes)
+        except (ValueError, TypeError):
+            return "Unknown size"
+        
         if size_bytes == 0:
             return "0 B"
         
@@ -314,9 +319,9 @@ async def main():
     try:
         await bot.start()
     except KeyboardInterrupt:
-        logger.info("Bot ကို အသုံးပြုသူက ရပ်တန့်ပါသည်")
+        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Bot ပြသနာဖြစ်သွားပါသည်: {e}")
+        logger.error(f"Bot crashed: {e}")
 
 if __name__ == '__main__':
     asyncio.run(main())
