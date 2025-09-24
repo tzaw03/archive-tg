@@ -116,15 +116,14 @@ class ArchiveOrgHandler:
             if file_name.endswith(('_meta.xml', '_files.xml', '_chocr.html', '_djvu.txt')):
                 continue
             
-            # Safely parse file size
+            # Skip small files (likely thumbnails or metadata)
             raw_size = file_info.get('size', 0)
             try:
                 file_size = int(raw_size)
             except (ValueError, TypeError):
                 file_size = 0
             
-            # Skip very small files (likely thumbnails or metadata)
-            if file_size < 1024:
+            if file_size < 1024:  # Less than 1KB
                 continue
             
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
@@ -177,13 +176,13 @@ class ArchiveOrgHandler:
                     try:
                         total_size = int(content_length)
                     except (ValueError, TypeError):
-                        # sometimes content-length can be a float-like string; try float then int
                         try:
                             total_size = int(float(str(content_length).strip()))
                         except (ValueError, TypeError):
                             total_size = 0
                 
                 downloaded = 0
+                last_logged_progress = -1
                 
                 async for chunk in response.content.iter_chunked(8192):
                     if chunk:
@@ -193,13 +192,14 @@ class ArchiveOrgHandler:
                         # Log progress for large files
                         if total_size > 0 and total_size > 10 * 1024 * 1024:  # Files larger than 10MB
                             progress = (downloaded / total_size) * 100
-                            # log only at whole percent for clarity (prevents spam)
-                            if int(progress) % 10 == 0:
+                            current_progress = int(progress)
+                            if current_progress % 10 == 0 and current_progress != last_logged_progress:
                                 logger.info(f"Download progress: {progress:.1f}%")
-                
-                file_stream.seek(0)
-                logger.info(f"Successfully downloaded: {file_name} ({self.format_file_size(downloaded)})")
-                return file_stream
+                                last_logged_progress = current_progress
+            
+            file_stream.seek(0)
+            logger.info(f"Successfully downloaded: {file_name} ({self.format_file_size(downloaded)})")
+            return file_stream
                 
         except Exception as e:
             logger.error(f"Error downloading file: {e}")
@@ -208,6 +208,11 @@ class ArchiveOrgHandler:
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
         """Format file size in human readable format"""
+        try:
+            size_bytes = int(size_bytes)
+        except (ValueError, TypeError):
+            return "Unknown size"
+        
         if size_bytes == 0:
             return "0 B"
         
