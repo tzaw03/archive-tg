@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Archive.org Handler Module
-Handles all archive.org API interactions
+Handles downloading files directly to a temporary disk path.
 """
 import asyncio
 import aiohttp
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse
 import io
@@ -39,19 +40,16 @@ class ArchiveOrgHandler:
 
     async def get_metadata(self, url: str) -> Optional[Dict[str, Any]]:
         identifier = self.extract_identifier(url)
-        if not identifier:
-            return None
+        if not identifier: return None
         try:
             session = await self.get_session()
             metadata_url = f"{self.base_url}{self.metadata_endpoint.format(identifier=identifier)}"
             async with session.get(metadata_url) as response:
                 response.raise_for_status()
                 metadata = await response.json()
-                # Ensure all file entries have the identifier for later use
                 if 'files' in metadata:
                     for f in metadata['files']:
-                        if 'identifier' not in f:
-                            f['identifier'] = identifier
+                        if 'identifier' not in f: f['identifier'] = identifier
                 return metadata
         except Exception as e:
             logger.error(f"Error fetching metadata for {identifier}: {e}")
@@ -62,44 +60,46 @@ class ArchiveOrgHandler:
         files = metadata.get('files', [])
         for file_info in files:
             format_name = file_info.get('format')
-            # Ensure the format name is valid and it's not a metadata file
             if format_name and file_info.get('name') and "Metadata" not in format_name:
-                if format_name not in formats:
-                    formats[format_name] = []
+                if format_name not in formats: formats[format_name] = []
                 formats[format_name].append(file_info)
         return dict(sorted(formats.items(), key=lambda x: len(x[1]), reverse=True))
-
-    async def download_file_stream(self, identifier: str, filename: str) -> Optional[io.BytesIO]:
+    
+    async def download_file_to_disk(self, identifier: str, filename: str, temp_dir: str) -> Optional[str]:
+        """Downloads a file and saves it to a temporary directory, returning the full path."""
         session = await self.get_session()
         download_url = f"{self.base_url}{self.download_endpoint.format(identifier=identifier, filename=filename)}"
+        save_path = os.path.join(temp_dir, filename)
         try:
             async with session.get(download_url) as response:
                 response.raise_for_status()
-                content = await response.read()
-                return io.BytesIO(content)
+                with open(save_path, 'wb') as f:
+                    while True:
+                        chunk = await response.content.read(1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+            logger.info(f"Successfully saved file to disk: {save_path}")
+            return save_path
         except Exception as e:
-            logger.error(f"Error downloading file stream for {filename}: {e}")
+            logger.error(f"Error downloading file {filename} to disk: {e}")
             return None
 
-    async def get_album_art_stream(self, metadata: Dict[str, Any]) -> Optional[io.BytesIO]:
+    async def get_album_art_to_disk(self, metadata: Dict[str, Any], temp_dir: str) -> Optional[str]:
+        """Finds and downloads the album art to a temporary directory."""
         files = metadata.get('files', [])
         identifier = metadata.get('metadata', {}).get('identifier')
         if not identifier: return None
 
         art_file_to_download = None
-        # Prefer image specified in metadata
         if metadata.get('misc', {}).get('image'):
             art_file_to_download = metadata['misc']['image']
-        
-        # If not found, look for common names
-        if not art_file_to_download:
+        else:
             art_candidates = ['cover.jpg', 'folder.jpg', 'front.jpg', 'albumart.jpg']
             for file_info in files:
                 if file_info.get('name', '').lower() in art_candidates:
                     art_file_to_download = file_info['name']
                     break
-        
-        # As a last resort, find the first JPEG file
         if not art_file_to_download:
             for file_info in files:
                 if file_info.get('format') == "JPEG":
@@ -108,7 +108,7 @@ class ArchiveOrgHandler:
 
         if art_file_to_download:
             logger.info(f"Found album art: {art_file_to_download}")
-            return await self.download_file_stream(identifier, art_file_to_download)
+            return await self.download_file_to_disk(identifier, art_file_to_download, temp_dir)
         
         logger.warning(f"Album art not found for {identifier}.")
         return None
