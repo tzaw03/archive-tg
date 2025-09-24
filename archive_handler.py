@@ -163,7 +163,14 @@ class ArchiveOrgHandler:
                     logger.error(f"Failed to download file: {response.status}")
                     return None
                 
-                total_size = int(response.headers.get('content-length', 0))
+                # Ensure content-length is an integer
+                content_length = response.headers.get('content-length', '0')
+                try:
+                    total_size = int(content_length)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid content-length: {content_length}, defaulting to 0")
+                    total_size = 0
+                
                 downloaded = 0
                 
                 async for chunk in response.content.iter_chunked(8192):
@@ -172,7 +179,7 @@ class ArchiveOrgHandler:
                         downloaded += len(chunk)
                         
                         # Log progress for large files
-                        if total_size > 10 * 1024 * 1024:  # Files larger than 10MB
+                        if total_size > 0 and total_size > 10 * 1024 * 1024:  # Files larger than 10MB
                             progress = (downloaded / total_size) * 100
                             if int(progress) % 10 == 0:  # Log every 10%
                                 logger.info(f"Download progress: {progress:.1f}%")
