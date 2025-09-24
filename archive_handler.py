@@ -83,6 +83,10 @@ class ArchiveOrgHandler:
         formats = {}
         files = metadata.get('files', [])
         
+        if not files:
+            logger.error("No files found in metadata")
+            return formats
+        
         # Define format categories
         format_categories = {
             'FLAC': ['flac'],
@@ -105,6 +109,7 @@ class ArchiveOrgHandler:
         for file_info in files:
             file_name = file_info.get('name', '')
             if not file_name:
+                logger.warning(f"File info missing name: {file_info}")
                 continue
             
             # Skip metadata files
@@ -123,7 +128,11 @@ class ArchiveOrgHandler:
                 if file_ext in extensions:
                     if format_name not in formats:
                         formats[format_name] = []
-                    formats[format_name].append(file_info)
+                    # Ensure identifier is present, use metadata identifier as fallback
+                    file_info_with_id = file_info.copy()
+                    if 'identifier' not in file_info_with_id:
+                        file_info_with_id['identifier'] = metadata.get('metadata', {}).get('identifier', '')
+                    formats[format_name].append(file_info_with_id)
                     break
         
         # Sort formats by file count
@@ -139,7 +148,7 @@ class ArchiveOrgHandler:
             file_name = file_info.get('name', '')
             
             if not identifier or not file_name:
-                logger.error("Missing identifier or filename")
+                logger.error(f"Missing identifier or filename in file_info: {file_info}")
                 return None
             
             download_url = f"{self.base_url}{self.download_endpoint.format(identifier=identifier, filename=file_name)}"
