@@ -112,7 +112,7 @@ class ArchiveOrgHandler:
                 continue
             
             # Skip small files (likely thumbnails or metadata)
-            file_size = file_info.get('size', 0)
+            file_size = file_info.get('size', '0')
             if int(file_size) < 1024:  # Less than 1KB
                 continue
             
@@ -152,6 +152,7 @@ class ArchiveOrgHandler:
                 
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
+                last_logged_progress = -1
                 
                 async for chunk in response.content.iter_chunked(8192):
                     if chunk:
@@ -161,8 +162,10 @@ class ArchiveOrgHandler:
                         # Log progress for large files
                         if total_size > 10 * 1024 * 1024:  # Files larger than 10MB
                             progress = (downloaded / total_size) * 100
-                            if int(progress) % 10 == 0:  # Log every 10%
+                            current_int = int(progress)
+                            if current_int % 10 == 0 and current_int != last_logged_progress:
                                 logger.info(f"Download progress: {progress:.1f}%")
+                                last_logged_progress = current_int
                 
                 file_stream.seek(0)
                 logger.info(f"Successfully downloaded: {file_name} ({self.format_file_size(downloaded)})")
@@ -221,6 +224,7 @@ class ArchiveOrgHandler:
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
         """Format file size in human readable format"""
+        size_bytes = int(size_bytes)  # Ensure it's int
         if size_bytes == 0:
             return "0 B"
         
