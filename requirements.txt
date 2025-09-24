@@ -1,5 +1,5 @@
-telethon==1.41.1
-aiohttp==3.10.5
-python-dotenv==1.0.1
-asyncio==3.4.3
+pyrogram==2.0.106
 mutagen==1.47.0
+python-dotenv==1.0.1
+aiohttp==3.10.5
+asyncio==3.4.3
