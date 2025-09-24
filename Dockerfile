@@ -36,3 +36,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the bot
 CMD ["python", "bot.py"]
+
+# Force rebuild on 2025-09-24
