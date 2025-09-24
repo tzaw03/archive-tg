@@ -8,7 +8,7 @@ import asyncio
 import aiohttp
 import logging
 from typing import Dict, List, Any, Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 import io
 
 logger = logging.getLogger(__name__)
@@ -116,9 +116,15 @@ class ArchiveOrgHandler:
             if file_name.endswith(('_meta.xml', '_files.xml', '_chocr.html', '_djvu.txt')):
                 continue
             
-            # Skip small files (likely thumbnails or metadata)
-            file_size = file_info.get('size', 0)
-            if int(file_size) < 1024:  # Less than 1KB
+            # Safely parse file size
+            raw_size = file_info.get('size', 0)
+            try:
+                file_size = int(raw_size)
+            except (ValueError, TypeError):
+                file_size = 0
+            
+            # Skip very small files (likely thumbnails or metadata)
+            if file_size < 1024:  
                 continue
             
             file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
@@ -166,13 +172,11 @@ class ArchiveOrgHandler:
                 # Ensure content-length is an integer
                 content_length = response.headers.get('content-length', None)
                 if content_length is None:
-                    logger.warning("No content-length header, defaulting to 0")
                     total_size = 0
                 else:
                     try:
-                        total_size = int(float(str(content_length).strip()))
+                        total_size = int(content_length)
                     except (ValueError, TypeError):
-                        logger.warning(f"Invalid content-length: {content_length}, defaulting to 0")
                         total_size = 0
                 
                 downloaded = 0
