@@ -23,7 +23,7 @@ app = Client("archive_bot_session", api_id=API_ID, api_hash=API_HASH, bot_token=
 
 archive_handler = ArchiveOrgHandler()
 channel_handler = TelegramChannelHandler(app, CHANNEL_ID)
-user_sessions: Dict[str, Dict[str, Any]] = {} # Changed key to string for session_key
+user_sessions: Dict[str, Dict[str, Any]] = {}
 
 @app.on_message(filters.command(["start", "help"]))
 async def handle_start(client, message):
@@ -44,9 +44,7 @@ async def handle_download(client, message):
         await status_msg.edit_text("❌ Could not fetch metadata.")
         return
 
-    # --- THIS IS THE FIX ---
-    session_key = f"{user_id}_{message.id}" # Changed from message.message_id to message.id
-    
+    session_key = f"{user_id}_{message.id}"
     user_sessions[session_key] = {'metadata': metadata}
     formats = archive_handler.get_available_formats(metadata)
     if not formats:
@@ -77,7 +75,7 @@ async def handle_button_press(client, callback_query):
             return
 
         await callback_query.edit_message_text(f"✅ Format '{format_name}' selected. Processing...")
-        asyncio.create_task(process_album_download(session, format_name, user_id))
+        asyncio.create_task(process_album_download(session, format_name, user_id, session_key))
     
     elif data.startswith('cancel_'):
         session_key = data.replace('cancel_', '')
@@ -86,7 +84,7 @@ async def handle_button_press(client, callback_query):
         await callback_query.edit_message_text("Operation cancelled.")
 
 
-async def process_album_download(session: dict, format_name: str, user_id: int):
+async def process_album_download(session: dict, format_name: str, user_id: int, session_key: str):
     temp_dir = f"/tmp/archive_bot_{user_id}_{format_name.replace(' ', '_')}"
     os.makedirs(temp_dir, exist_ok=True)
     
@@ -102,7 +100,11 @@ async def process_album_download(session: dict, format_name: str, user_id: int):
         album_title = album_meta.get('title', 'Unknown Album')
         album_year = album_meta.get('date', album_meta.get('year', ''))
         
-        caption = f"**Album:** {album_title}\n**Year:** {album_year}\n**Format:** {format_name}"
+        # --- FIX #3: ADDING EMOJIS ---
+        caption = (f"📀 **Album:** {album_title}\n"
+                   f"🗓️ **Year:** {album_year}\n"
+                   f"🎧 **Format:** {format_name}")
+        
         if art_path:
             await app.send_photo(chat_id=CHANNEL_ID, photo=art_path, caption=caption)
         else:
@@ -118,9 +120,16 @@ async def process_album_download(session: dict, format_name: str, user_id: int):
             if not track_path: continue
 
             await status_msg_to_user.edit_text(f"Embedding metadata for {i}/{total_files}...")
+            
+            # --- FIX #1: CORRECT ARTIST NAME ---
+            # Prioritize 'artist' field, fallback to 'creator'
+            artist_name = album_meta.get('artist', album_meta.get('creator', 'Unknown Artist'))
+            
             track_meta = {
                 'title': os.path.splitext(file_name)[0].replace('_', ' ').strip(),
-                'artist': album_meta.get('creator', 'Unknown Artist'), 'album': album_title, 'date': album_year
+                'artist': artist_name, 
+                'album': album_title, 
+                'date': album_year
             }
             embed_success = channel_handler.embed_metadata(track_path, track_meta, art_path)
             
@@ -128,8 +137,9 @@ async def process_album_download(session: dict, format_name: str, user_id: int):
             if not embed_success:
                 await app.send_message(user_id, f"⚠️ Metadata embedding failed for `{file_name}`.")
             
-            track_caption = f"**Track:** {track_meta['title']}"
-            await channel_handler.upload_file(track_path, track_caption, track_meta, art_path)
+            # --- FIX #2: REMOVE REDUNDANT CAPTION ---
+            # Pass an empty string "" as caption for audio files
+            await channel_handler.upload_file(track_path, "", track_meta, art_path)
 
         await status_msg_to_user.edit_text(f"✅ **Process Complete!** All {total_files} tracks uploaded.")
     except Exception as e:
@@ -139,6 +149,8 @@ async def process_album_download(session: dict, format_name: str, user_id: int):
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
             logger.info(f"Cleaned up temporary directory: {temp_dir}")
+        if session_key in user_sessions:
+            del user_sessions[session_key]
         
 if __name__ == "__main__":
     logger.info("Bot starting...")
