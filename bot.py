@@ -21,7 +21,7 @@ API_ID = int(os.environ.get('TELEGRAM_API_ID', '0'))
 API_HASH = os.environ.get('TELEGRAM_API_HASH', '')
 BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', '')
-SESSION_NAME = 'archive_bot_session'
+SESSION_NAME = 'archive_bot_session_v2'
 
 class ArchiveTelegramBot:
     def __init__(self):
